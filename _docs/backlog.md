@@ -1,13 +1,20 @@
 # Household Chores Tool Backlog
 
 ## 1. Set up an empty Django project with a passing test
+Status: Completed in PR #17
 Goal: Establish a runnable Django and Django REST Framework project baseline.
 Description: Configure the project structure, dependencies, settings, and test runner without implementing household or chore behavior. Add one minimal test that proves the empty project loads successfully.
 Acceptance criteria:
-- The project starts with the documented development command.
-- Django system checks pass.
-- The test suite runs successfully with at least one passing test.
-- The project dependencies and local environment setup are documented.
+- [x] The project starts with the documented development command.
+- [x] Django system checks pass.
+- [x] The test suite runs successfully with at least one passing test.
+- [x] The project dependencies and local environment setup are documented.
+Implementation:
+- Created the `config` Django project and `chores` app.
+- Added uv project metadata and a lockfile with Django and Django REST Framework dependencies.
+- Registered Django REST Framework and the chores app in project settings.
+- Added a project-loading test for the admin login page.
+- Documented setup, run, check, and test commands in `README.md`.
 
 ## 2. Define household and membership data models
 Goal: Represent one household and its members with explicit roles.
