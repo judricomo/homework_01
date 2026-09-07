@@ -380,12 +380,20 @@ class DueSurfaceView(generics.GenericAPIView):
             if due_date > local_today:
                 continue
 
+            assignments = [
+                candidate for candidate in chore.assignments.all()
+                if candidate.is_active
+                and candidate.membership_id == membership.id
+                and candidate.membership.is_active
+            ]
             assignment = next(
                 (
-                    candidate for candidate in chore.assignments.all()
-                    if candidate.is_active
-                    and candidate.membership_id == membership.id
-                    and candidate.membership.is_active
+                    candidate for candidate in assignments
+                    if not any(
+                        completion.occurrence == candidate.occurrence
+                        and completion.status == Completion.Status.APPROVED
+                        for completion in chore.completions.all()
+                    )
                 ),
                 None,
             )
@@ -398,13 +406,6 @@ class DueSurfaceView(generics.GenericAPIView):
 
             # An approved occurrence is complete even if stale assignment data
             # remains; pending and rejected records intentionally remain visible.
-            if assignment and any(
-                completion.occurrence == assignment.occurrence
-                and completion.status == Completion.Status.APPROVED
-                for completion in chore.completions.all()
-            ):
-                continue
-
             due_at = timezone.make_aware(datetime.combine(due_date, time.min), project_zone)
             due_state = "due" if local_today == due_date else "overdue"
             items.append({

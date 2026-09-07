@@ -63,6 +63,21 @@ member cannot resubmit that occurrence, and there is no retry endpoint.
 Pending or rejected completions have no points, streak, badge, or leaderboard
 side effects.
 
+## Due and overdue API contract
+
+`GET /api/due-overdue/` is an authenticated, read-only household-member surface.
+It returns `{timezone, as_of, due, overdue}`; each item contains `chore`,
+`occurrence`, `assignment`, `claimable`, `due_date`, `due_at`, `due_state`, and
+`recurrence`. Dates and midnight timestamps use the configured project timezone.
+The due boundary is inclusive at local midnight; future occurrences are omitted,
+and approved occurrences are omitted while pending or rejected ones remain.
+Both collections are deterministic by chore id ascending (there is no pagination
+or result bound), and empty collections remain arrays. Unknown query parameters
+are ignored; household scoping is always derived from the authenticated member.
+Unauthenticated requests return 401 and inactive/non-member users return 403.
+The endpoint performs no completion, assignment, gamification, or external
+notification work.
+
 ## Leaderboard API contract
 
 Active household members can read the all-time leaderboard at

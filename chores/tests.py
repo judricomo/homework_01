@@ -1033,6 +1033,160 @@ class DueSurfaceAPITests(TestCase):
         response = self.client.get(reverse("due-overdue"))
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
+    @override_settings(TIME_ZONE="America/Los_Angeles")
+    @patch("chores.views.timezone.now")
+    def test_api_uses_project_timezone_at_dst_local_midnight(self, mocked_now):
+        mocked_now.return_value = datetime.fromisoformat("2026-03-08T08:00:00+00:00")
+        _, assignment = self.chore("Spring transition", date(2026, 3, 8))
+
+        response = self.get_surface()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        item = response.data["due"][0]
+        self.assertEqual(item["due_date"], "2026-03-08")
+        self.assertEqual(item["due_at"], "2026-03-08T00:00:00-08:00")
+        self.assertEqual(item["occurrence"], str(assignment.occurrence))
+        mocked_now.return_value = datetime.fromisoformat("2026-11-01T07:00:00+00:00")
+        self.chore("Fall transition", date(2026, 11, 1))
+
+        response = self.get_surface()
+
+        fall_item = next(
+            item for item in response.data["due"]
+            if item["chore"]["name"] == "Fall transition"
+        )
+        self.assertEqual(fall_item["due_at"], "2026-11-01T00:00:00-07:00")
+
+    def test_approved_completion_uses_recurrence_next_occurrence(self):
+        chore, first_assignment = self.chore("Daily recurrence", self.today)
+        chore.fixed_recurrence = Chore.FixedRecurrence.DAILY
+        chore.save()
+        completion = Completion.objects.create(
+            household=self.household, chore=chore, assignment=first_assignment,
+            submitted_by=self.membership, occurrence=first_assignment.occurrence,
+            status=Completion.Status.APPROVED,
+            reviewer=self.membership,
+            reviewed_at=timezone.now(),
+        )
+        Completion.objects.filter(pk=completion.pk).update(
+            submitted_at=timezone.now() - timedelta(days=1)
+        )
+        next_assignment = ChoreAssignment.create_manual(
+            chore, self.membership, occurrence=uuid.uuid4()
+        )
+
+        response = self.get_surface()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            [(item["chore"]["name"], item["occurrence"]) for item in response.data["due"]],
+            [("Daily recurrence", str(next_assignment.occurrence))],
+        )
+        self.assertEqual(response.data["due"][0]["due_date"], str(self.today))
+
+    def test_rejected_completion_has_no_gamification_or_assignment_side_effects(self):
+        chore, assignment = self.chore("Rejected work", self.today)
+        reviewer = Membership.objects.create(
+            household=self.household,
+            user=get_user_model().objects.create_user(username="reject-reviewer"),
+            role=Membership.Role.MEMBER,
+        )
+        completion = Completion.objects.create(
+            household=self.household, chore=chore, assignment=assignment,
+            submitted_by=self.membership, occurrence=assignment.occurrence,
+            status=Completion.Status.REJECTED, reviewer=reviewer,
+            reviewed_at=timezone.now(),
+        )
+        before = {
+            "assignment": assignment.is_active,
+            "points": PointsLedger.objects.count(),
+            "streaks": MemberStreak.objects.count(),
+            "badges": BadgeAward.objects.count(),
+            "completion_status": completion.status,
+        }
+
+        response = self.get_surface()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["due"][0]["occurrence"], str(assignment.occurrence))
+        assignment.refresh_from_db()
+        completion.refresh_from_db()
+        self.assertEqual(assignment.is_active, before["assignment"])
+        self.assertEqual(PointsLedger.objects.count(), before["points"])
+        self.assertEqual(MemberStreak.objects.count(), before["streaks"])
+        self.assertEqual(BadgeAward.objects.count(), before["badges"])
+        self.assertEqual(completion.status, before["completion_status"])
+
+    def test_inactive_assignee_and_future_claim_are_hidden(self):
+        inactive_user = get_user_model().objects.create_user(username="inactive-assignee")
+        inactive = Membership.objects.create(
+            household=self.household, user=inactive_user, role=Membership.Role.MEMBER,
+        )
+        inactive_chore = Chore.objects.create(
+            household=self.household, name="Inactive", difficulty=Chore.Difficulty.EASY,
+            assignment_mode=Chore.AssignmentMode.MANUAL, anchor_date=self.today,
+        )
+        ChoreAssignment.create_manual(inactive_chore, inactive)
+        Membership.objects.filter(pk=inactive.pk).update(is_active=False)
+        self.chore("Future claim", self.today + timedelta(days=1), Chore.AssignmentMode.CLAIM)
+
+        response = self.get_surface()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["due"], [])
+        self.assertEqual(response.data["overdue"], [])
+
+    def test_identifiers_and_unknown_filters_do_not_bypass_household_scope(self):
+        chore, _ = self.chore("Visible", self.today)
+        other_household = Household.objects.create(name="Other due household")
+        other_user = get_user_model().objects.create_user(username="other-due-member")
+        other_member = Membership.objects.create(
+            household=other_household, user=other_user, role=Membership.Role.MEMBER
+        )
+        other_chore = Chore.objects.create(
+            household=other_household, name="Secret", difficulty=Chore.Difficulty.EASY,
+            assignment_mode=Chore.AssignmentMode.MANUAL, anchor_date=self.today,
+        )
+        other_assignment = ChoreAssignment.create_manual(other_chore, other_member)
+
+        self.client.force_authenticate(self.user)
+        response = self.client.get(
+            reverse("due-overdue"),
+            {
+                "chore_id": other_chore.pk,
+                "occurrence": str(other_assignment.occurrence),
+                "unknown": "not-a-real-filter",
+            },
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            [item["chore"]["id"] for item in response.data["due"]], [chore.pk]
+        )
+        self.assertNotContains(response, "Secret")
+
+    @patch("django.core.mail.send_mail")
+    def test_read_only_surface_has_no_external_notification_side_effect(self, send_mail):
+        self.chore("Read only", self.today)
+        before = {
+            "chores": list(Chore.objects.values_list("id", "updated_at")),
+            "assignments": list(ChoreAssignment.objects.values_list("id", "is_active")),
+            "completions": Completion.objects.count(),
+        }
+
+        response = self.get_surface()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        send_mail.assert_not_called()
+        self.assertEqual(
+            list(Chore.objects.values_list("id", "updated_at")), before["chores"]
+        )
+        self.assertEqual(
+            list(ChoreAssignment.objects.values_list("id", "is_active")),
+            before["assignments"],
+        )
+        self.assertEqual(Completion.objects.count(), before["completions"])
+
 
 class CompletionAPITests(TestCase):
     def setUp(self):
