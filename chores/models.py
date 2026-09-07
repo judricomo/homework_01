@@ -61,7 +61,9 @@ class Membership(models.Model):
 
     def save(self, *args, **kwargs):
         self.full_clean()
-        return super().save(*args, **kwargs)
+        result = super().save(*args, **kwargs)
+        MemberStreak.objects.get_or_create(membership=self)
+        return result
 
     def __str__(self):
         return f"{self.user} - {self.household} ({self.role})"
@@ -625,8 +627,141 @@ class Completion(models.Model):
             if status == cls.Status.APPROVED:
                 completion.assignment.is_active = False
                 completion.assignment.save(update_fields=["is_active"])
+                MemberStreak.record_approved_completion(completion)
             return completion
 
+
+class MemberStreak(models.Model):
+    """Durable daily activity evidence and derived streak state for one member."""
+
+    membership = models.OneToOneField(
+        Membership, on_delete=models.CASCADE, related_name="streak"
+    )
+    current_streak = models.PositiveIntegerField(default=0)
+    best_streak = models.PositiveIntegerField(default=0)
+    last_activity_date = models.DateField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(current_streak__gte=0) & models.Q(best_streak__gte=0),
+                name="member_streak_non_negative",
+            ),
+        ]
+
+    @classmethod
+    def activity_date_for(cls, submitted_at):
+        if submitted_at is None:
+            raise ValidationError("A submitted timestamp is required.")
+        if timezone.is_naive(submitted_at):
+            submitted_at = timezone.make_aware(submitted_at, timezone.utc)
+        return timezone.localtime(submitted_at, ZoneInfo(settings.TIME_ZONE)).date()
+
+    @classmethod
+    def record_approved_completion(cls, completion):
+        """Record one approved completion's local member-day and recalculate state."""
+        if not isinstance(completion, Completion):
+            completion = Completion.objects.select_related(
+                "household", "submitted_by", "chore"
+            ).get(pk=completion)
+        if completion.status != Completion.Status.APPROVED:
+            raise ValidationError("Only approved completions affect streaks.")
+        if (
+            completion.submitted_at is None
+            or completion.household_id != completion.chore.household_id
+            or completion.submitted_by.household_id != completion.household_id
+            or not completion.submitted_by.is_active
+        ):
+            raise ValidationError("Completion is not valid for streak tracking.")
+
+        activity_date = cls.activity_date_for(completion.submitted_at)
+        for attempt in range(PointsLedger.SQLITE_LOCK_RETRIES + 1):
+            try:
+                with transaction.atomic():
+                    membership = Membership.objects.select_for_update().get(
+                        pk=completion.submitted_by_id,
+                        household_id=completion.household_id,
+                        is_active=True,
+                    )
+                    streak, _ = cls.objects.select_for_update().get_or_create(
+                        membership=membership
+                    )
+                    try:
+                        with transaction.atomic():
+                            MemberActivityDay.objects.create(
+                                membership=membership,
+                                household=membership.household,
+                                activity_date=activity_date,
+                            )
+                    except (IntegrityError, ValidationError):
+                        if not MemberActivityDay.objects.filter(
+                            membership=membership, activity_date=activity_date
+                        ).exists():
+                            raise
+                    days = list(
+                        MemberActivityDay.objects.filter(
+                            membership=membership,
+                            household_id=membership.household_id,
+                        ).values_list("activity_date", flat=True).order_by("activity_date")
+                    )
+                    current = best = run = 0
+                    previous = None
+                    for day in days:
+                        run = run + 1 if previous and day == previous + timedelta(days=1) else 1
+                        best = max(best, run)
+                        previous = day
+                    if days:
+                        latest = days[-1]
+                        run = 0
+                        day = latest
+                        while day in days:
+                            run += 1
+                            day -= timedelta(days=1)
+                        current = run
+                    streak.current_streak = current
+                    streak.best_streak = max(streak.best_streak, best)
+                    streak.last_activity_date = days[-1] if days else None
+                    streak.save(update_fields=[
+                        "current_streak", "best_streak", "last_activity_date", "updated_at"
+                    ])
+                    return streak
+            except OperationalError as exc:
+                if "locked" not in str(exc).lower() or attempt == PointsLedger.SQLITE_LOCK_RETRIES:
+                    raise ValidationError("Streak could not be updated due to concurrent activity.") from exc
+                close_old_connections()
+                time.sleep(PointsLedger.SQLITE_LOCK_RETRY_DELAY * (attempt + 1))
+
+    update_for_approved_completion = record_approved_completion
+
+
+class MemberActivityDay(models.Model):
+    membership = models.ForeignKey(
+        Membership, on_delete=models.CASCADE, related_name="activity_days"
+    )
+    household = models.ForeignKey(
+        Household, on_delete=models.CASCADE, related_name="member_activity_days"
+    )
+    activity_date = models.DateField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["activity_date"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["membership", "activity_date"],
+                name="unique_member_activity_day",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.membership.household_id != self.household_id:
+            raise ValidationError({"household": "Activity household must match membership."})
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
 
 
 class PointsLedger(models.Model):

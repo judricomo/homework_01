@@ -24,6 +24,8 @@ from .models import (
     ChoreAssignment,
     Completion,
     Household,
+    MemberActivityDay,
+    MemberStreak,
     Membership,
     PointsLedger,
     RotationMember,
@@ -1310,6 +1312,75 @@ class TokenAuthenticationTests(TestCase):
             ["rest_framework.permissions.IsAuthenticated"],
         )
 
+
+
+class MemberStreakTests(TestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.household = Household.objects.create(name="Streak household")
+        self.user = user_model.objects.create_user(username="streak-member")
+        self.member = Membership.objects.create(
+            household=self.household, user=self.user, role=Membership.Role.MEMBER
+        )
+        self.chore = Chore.objects.create(
+            household=self.household, name="Streak chore", difficulty="easy",
+            assignment_mode=Chore.AssignmentMode.MANUAL,
+        )
+
+    def completion(self, submitted_at, status=Completion.Status.APPROVED, **kwargs):
+        assignment = ChoreAssignment.create_manual(self.chore, self.member)
+        completion = Completion.objects.create(
+            household=self.household, chore=self.chore, assignment=assignment,
+            submitted_by=self.member, occurrence=assignment.occurrence, status=status,
+            reviewer=self.member if status != Completion.Status.PENDING else None,
+            reviewed_at=submitted_at if status != Completion.Status.PENDING else None,
+            **kwargs,
+        )
+        Completion.objects.filter(pk=completion.pk).update(submitted_at=submitted_at)
+        return Completion.objects.get(pk=completion.pk)
+
+    def test_no_activity_starts_at_zero(self):
+        streak = MemberStreak.objects.get(membership=self.member)
+        self.assertEqual((streak.current_streak, streak.best_streak, streak.last_activity_date), (0, 0, None))
+
+    def test_consecutive_and_gapped_days_preserve_best(self):
+        for day in (date(2026, 4, 1), date(2026, 4, 2), date(2026, 4, 5)):
+            MemberStreak.record_approved_completion(
+                self.completion(timezone.make_aware(datetime.combine(day, datetime.min.time())))
+            )
+        streak = MemberStreak.objects.get(membership=self.member)
+        self.assertEqual(streak.current_streak, 1)
+        self.assertEqual(streak.best_streak, 2)
+        self.assertEqual(streak.last_activity_date, date(2026, 4, 5))
+
+    def test_same_day_duplicates_and_out_of_order_are_idempotent(self):
+        first = self.completion(timezone.make_aware(datetime(2026, 4, 3, 1)))
+        third = self.completion(timezone.make_aware(datetime(2026, 4, 5, 1)))
+        second = self.completion(timezone.make_aware(datetime(2026, 4, 4, 1)))
+        for completion in (third, first, second, first):
+            MemberStreak.record_approved_completion(completion)
+        self.assertEqual(MemberActivityDay.objects.filter(membership=self.member).count(), 3)
+        streak = MemberStreak.objects.get(membership=self.member)
+        self.assertEqual((streak.current_streak, streak.best_streak), (3, 3))
+
+    def test_pending_rejected_and_invalid_completions_have_no_effect(self):
+        pending = self.completion(timezone.now(), status=Completion.Status.PENDING)
+        rejected = self.completion(timezone.now(), status=Completion.Status.REJECTED)
+        for completion in (pending, rejected):
+            with self.assertRaises(ValidationError):
+                MemberStreak.record_approved_completion(completion)
+        self.assertFalse(MemberActivityDay.objects.exists())
+
+    @override_settings(TIME_ZONE="America/Los_Angeles")
+    def test_activity_date_uses_project_timezone_across_midnight_and_dst(self):
+        before_midnight = self.completion(datetime.fromisoformat("2026-03-08T07:30:00+00:00"))
+        after_midnight = self.completion(datetime.fromisoformat("2026-03-08T08:30:00+00:00"))
+        MemberStreak.record_approved_completion(before_midnight)
+        MemberStreak.record_approved_completion(after_midnight)
+        self.assertEqual(
+            list(MemberActivityDay.objects.values_list("activity_date", flat=True)),
+            [date(2026, 3, 7), date(2026, 3, 8)],
+        )
 
 
 class PointsLedgerTests(TestCase):
