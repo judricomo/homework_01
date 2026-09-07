@@ -611,10 +611,13 @@ class Completion(models.Model):
                 raise ValidationError("You cannot review your own completion.")
             if completion.status != cls.Status.PENDING:
                 raise ValidationError("This completion has already been reviewed.")
-            completion.status = status
-            completion.reviewer = reviewer
-            completion.reviewed_at = timezone.now()
-            completion.save(update_fields=["status", "reviewer", "reviewed_at"])
+            reviewed_at = timezone.now()
+            updated = cls.objects.filter(
+                pk=completion.pk, status=cls.Status.PENDING
+            ).update(status=status, reviewer=reviewer, reviewed_at=reviewed_at)
+            if not updated:
+                raise ValidationError("This completion has already been reviewed.")
+            completion.refresh_from_db()
             if status == cls.Status.APPROVED:
                 completion.assignment.is_active = False
                 completion.assignment.save(update_fields=["is_active"])

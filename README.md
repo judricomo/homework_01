@@ -47,3 +47,18 @@ Member result objects expose `id`, `name`, `difficulty`, `points`,
 `upcoming`, `due`, or `overdue`; completion states (`pending`, `approved`,
 `rejected`, and `completed`) are not part of this API and belong to issue #10.
 Due dates are consumed from the recurrence model contract (issue #8).
+
+## Completion API contract
+
+`POST /api/household/my-chores/<chore-id>/complete/` submits the assigned
+occurrence as `pending`. Household members can retrieve household-scoped
+completions at `/api/household/completions/` and review another member's
+pending completion with `POST /api/household/completions/<id>/review/`,
+passing `{"status": "approved"}` or `{"status": "rejected"}`. Review is
+single-use: a completion may transition from pending exactly once, and the
+reviewer and timestamp are retained. Approval deactivates the assignment;
+rejection leaves the assignment active but preserves the rejected record.
+Rejected occurrences are terminal for the submitting member in v1: the same
+member cannot resubmit that occurrence, and there is no retry endpoint.
+Pending or rejected completions have no points, streak, badge, or leaderboard
+side effects.

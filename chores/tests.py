@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
-from django.db import IntegrityError, close_old_connections, transaction
+from django.db import IntegrityError, OperationalError, close_old_connections, transaction
 from django.test import SimpleTestCase
 from django.test import TestCase, TransactionTestCase
 from django.urls import path, reverse
@@ -935,6 +935,19 @@ class CompletionAPITests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(Completion.objects.count(), 1)
 
+    def test_pending_completion_can_be_retrieved(self):
+        completion = Completion.submit(
+            membership=self.submitter_membership, chore=self.chore,
+            occurrence=self.assignment.occurrence,
+        )
+        self.client.force_authenticate(self.reviewer)
+        response = self.client.get(reverse("completion-list"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data[0]["id"], completion.id)
+        response = self.client.get(reverse("completion-detail", args=[completion.pk]))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["status"], Completion.Status.PENDING)
+
     def test_reviewer_can_approve_and_self_review_is_denied(self):
         completion = Completion.submit(
             membership=self.submitter_membership, chore=self.chore,
@@ -961,6 +974,125 @@ class CompletionAPITests(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_rejection_preserves_history_and_assignment_but_blocks_retry(self):
+        completion = Completion.submit(
+            membership=self.submitter_membership, chore=self.chore,
+            occurrence=self.assignment.occurrence,
+        )
+        self.client.force_authenticate(self.reviewer)
+        response = self.client.post(
+            reverse("completion-review", args=[completion.pk]),
+            {"status": Completion.Status.REJECTED}, format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        completion.refresh_from_db()
+        self.assignment.refresh_from_db()
+        self.assertEqual(completion.status, Completion.Status.REJECTED)
+        self.assertEqual(completion.reviewer_id, self.reviewer_membership.id)
+        self.assertIsNotNone(completion.reviewed_at)
+        self.assertTrue(self.assignment.is_active)
+        self.client.force_authenticate(self.submitter)
+        response = self.client.post(
+            reverse("my-chore-complete", args=[self.chore.pk]),
+            {"occurrence": str(self.assignment.occurrence)}, format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(Completion.objects.count(), 1)
+
+    def test_invalid_unknown_ineligible_and_inactive_submissions_do_not_write(self):
+        self.client.force_authenticate(self.submitter)
+        before = Completion.objects.count()
+        for payload in ({}, {"occurrence": str(uuid.uuid4())}, {"occurrence": "bad"}):
+            response = self.client.post(
+                reverse("my-chore-complete", args=[self.chore.pk]),
+                payload, format="json",
+            )
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(Completion.objects.count(), before)
+
+        self.client.force_authenticate(self.reviewer)
+        response = self.client.post(
+            reverse("my-chore-complete", args=[self.chore.pk]),
+            {"occurrence": str(self.assignment.occurrence)}, format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assignment.is_active = False
+        self.assignment.save(update_fields=["is_active"])
+        self.client.force_authenticate(self.submitter)
+        response = self.client.post(
+            reverse("my-chore-complete", args=[self.chore.pk]),
+            {"occurrence": str(self.assignment.occurrence)}, format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(Completion.objects.count(), before)
+
+    def test_cross_household_completion_is_not_retrievable_or_reviewable(self):
+        other = Household.objects.create(name="Other")
+        user = get_user_model().objects.create_user(username="other")
+        member = Membership.objects.create(
+            household=other, user=user, role=Membership.Role.MEMBER
+        )
+        chore = Chore.objects.create(
+            household=other, name="Other chore", difficulty="easy",
+            assignment_mode=Chore.AssignmentMode.MANUAL,
+        )
+        assignment = ChoreAssignment.create_manual(chore, member)
+        completion = Completion.submit(
+            membership=member, chore=chore, occurrence=assignment.occurrence
+        )
+        self.client.force_authenticate(self.reviewer)
+        self.assertEqual(
+            self.client.get(reverse("completion-detail", args=[completion.pk])).status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+        self.assertEqual(
+            self.client.post(
+                reverse("completion-review", args=[completion.pk]),
+                {"status": Completion.Status.APPROVED}, format="json",
+            ).status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+        completion.refresh_from_db()
+        self.assertEqual(completion.status, Completion.Status.PENDING)
+
+    def test_unauthenticated_review_is_rejected(self):
+        completion = Completion.submit(
+            membership=self.submitter_membership, chore=self.chore,
+            occurrence=self.assignment.occurrence,
+        )
+        response = self.client.post(
+            reverse("completion-review", args=[completion.pk]),
+            {"status": Completion.Status.APPROVED}, format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_invalid_review_and_replay_leave_state_unchanged(self):
+        completion = Completion.submit(
+            membership=self.submitter_membership, chore=self.chore,
+            occurrence=self.assignment.occurrence,
+        )
+        self.client.force_authenticate(self.reviewer)
+        response = self.client.post(
+            reverse("completion-review", args=[completion.pk]),
+            {"status": "pending"}, format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        response = self.client.post(
+            reverse("completion-review", args=[completion.pk]),
+            {"status": Completion.Status.APPROVED}, format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        completion.refresh_from_db()
+        reviewed_at = completion.reviewed_at
+        response = self.client.post(
+            reverse("completion-review", args=[completion.pk]),
+            {"status": Completion.Status.REJECTED}, format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        completion.refresh_from_db()
+        self.assertEqual(completion.status, Completion.Status.APPROVED)
+        self.assertEqual(completion.reviewed_at, reviewed_at)
+
     def test_cross_household_and_inactive_members_are_denied(self):
         self.client.force_authenticate(self.submitter)
         other = Household.objects.create(name="Other")
@@ -974,6 +1106,60 @@ class CompletionAPITests(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
+
+class CompletionReviewRaceTests(TransactionTestCase):
+    reset_sequences = True
+
+    def setUp(self):
+        user_model = get_user_model()
+        self.household = Household.objects.create(name="Race household")
+        submitter = user_model.objects.create_user(username="race-submitter")
+        reviewer = user_model.objects.create_user(username="race-reviewer")
+        self.submitter_membership = Membership.objects.create(
+            household=self.household, user=submitter, role=Membership.Role.MEMBER
+        )
+        self.reviewer_membership = Membership.objects.create(
+            household=self.household, user=reviewer, role=Membership.Role.MEMBER
+        )
+        chore = Chore.objects.create(
+            household=self.household, name="Race chore", difficulty="easy",
+            assignment_mode=Chore.AssignmentMode.MANUAL,
+        )
+        assignment = ChoreAssignment.create_manual(chore, self.submitter_membership)
+        self.completion = Completion.submit(
+            membership=self.submitter_membership, chore=chore,
+            occurrence=assignment.occurrence,
+        )
+
+    def test_concurrent_reviews_have_one_winner_and_one_final_state(self):
+        barrier = threading.Barrier(2)
+
+        def review():
+            close_old_connections()
+            try:
+                barrier.wait()
+                Completion.review(
+                    completion_id=self.completion.pk,
+                    reviewer=self.reviewer_membership,
+                    status=Completion.Status.APPROVED,
+                )
+                return "won"
+            except (ValidationError, OperationalError):
+                return "lost"
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            outcomes = list(executor.map(lambda _: review(), (1, 2)))
+        self.assertEqual(outcomes.count("won"), 1)
+        self.completion.refresh_from_db()
+        self.assertEqual(self.completion.status, Completion.Status.APPROVED)
+        self.assertEqual(
+            Completion.objects.filter(
+                pk=self.completion.pk, status=Completion.Status.APPROVED
+            ).count(),
+            1,
+        )
 
 
 class ProtectedResourceView(APIView):
