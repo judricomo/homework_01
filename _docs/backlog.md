@@ -30,14 +30,30 @@ Acceptance criteria:
 
 ## 3. Configure token authentication and API access
 Status: Groomed in [#3](https://github.com/judricomo/homework_01/issues/3)
-Goal: Allow registered household users to authenticate through the API.
-Description: Add Django REST Framework and its built-in token authentication. Configure authenticated API access while keeping self-service signup disabled.
+Goal: Enable existing Django users to authenticate through Django REST Framework token authentication and use authenticated API resources.
+Description: Add the documented token endpoint and centrally configured token authentication and permissions. Keep account creation, membership management, and household authorization outside this task.
 Acceptance criteria:
-- [ ] An existing user can obtain and use a DRF token.
-- [ ] Protected requests reject missing, invalid, and revoked tokens.
-- [ ] Authentication and default permission settings are enabled consistently.
-- [ ] No endpoint creates users, households, or memberships.
-- [ ] Focused tests cover valid and rejected authentication cases.
+- [ ] `POST /api/auth/token/` accepts valid existing-user credentials and returns HTTP 200 with a reusable DRF token.
+- [ ] Repeating issuance for the same user returns the existing token rather than creating duplicate active tokens.
+- [ ] A protected request with `Authorization: Token <valid-token>` is authenticated as the token owner.
+- [ ] Protected requests without authorization, with malformed or unknown tokens, or with deleted/revoked tokens return HTTP 401 and do not execute the action.
+- [ ] Invalid credentials cannot obtain a token and do not reveal whether the username exists.
+- [ ] Central API settings require authentication by default while allowing explicit public opt-out.
+- [ ] Token authentication does not imply household membership; household-scoped resources enforce their own authorization.
+- [ ] No endpoint in this task creates, updates, or deletes users, households, or memberships.
+- [ ] Focused tests cover issuance, reuse, authenticated access, missing/malformed/unknown/revoked tokens, invalid credentials, and the no-signup boundary.
+Out of scope:
+- Administrator membership changes: [#4](https://github.com/judricomo/homework_01/issues/4)
+- Household and membership models: [#2](https://github.com/judricomo/homework_01/issues/2)
+- Chore endpoints and domain permissions: [#5](https://github.com/judricomo/homework_01/issues/5) and [#9](https://github.com/judricomo/homework_01/issues/9)
+- Self-service signup and invite links/codes: [#20](https://github.com/judricomo/homework_01/issues/20)
+- JWT, third-party identity providers, password reset/email verification, and external notification delivery remain outside the v1 authentication contract.
+Constraints:
+- Use DRF's built-in `TokenAuthentication` and token model; do not add JWT or a custom user model.
+- Use the documented endpoint and `Authorization: Token` format; do not add an undocumented bearer alias.
+- Limit changes to project settings, token-auth URL/view wiring, required token migrations, and focused API tests.
+- Preserve Django password authentication and keep credentials and token values out of logs and error messages.
+- Keep authentication separate from household authorization so a valid token cannot grant access to another household's data.
 
 ## 4. Implement administrator membership management
 Status: Groomed in [#4](https://github.com/judricomo/homework_01/issues/4)
