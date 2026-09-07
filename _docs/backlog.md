@@ -57,15 +57,29 @@ Constraints:
 
 ## 4. Implement administrator membership management
 Status: Groomed in [#4](https://github.com/judricomo/homework_01/issues/4)
-Goal: Let a household administrator add, view, update, and remove members by email.
-Description: Build the membership management API for the single household. Adding a member should locate an existing user by email or return a clear validation error, and only administrators may change membership.
+Goal: Let a household administrator add, view, update, and remove members in the single v1 household.
+Description: Build the authenticated membership-management API on top of the Household and Membership models. An administrator can add an existing user by email, list members, change member roles, and remove members while preserving household isolation and at least one administrator. Unknown users are rejected; signup and invitation flows remain separate.
 Acceptance criteria:
-- [ ] An administrator can add an existing user by email.
-- [ ] Unknown and duplicate emails return clear errors without creating memberships.
-- [ ] An administrator can list and remove members without exposing another household.
-- [ ] The last household administrator cannot be removed.
-- [ ] Regular members and unauthenticated users are denied management operations.
-- [ ] Focused API tests cover valid operations, errors, permissions, and scoping.
+- [ ] An authenticated administrator can add exactly one existing user by email, defaulting the new membership to regular member, and the response identifies the user, household, role, and membership.
+- [ ] Email lookup trims surrounding whitespace and is case-insensitive; an unknown email returns a clear validation error without creating a user or membership.
+- [ ] A user already belonging to the household, including an email that differs only by case or whitespace, returns a clear conflict or validation error without creating a duplicate membership.
+- [ ] If email lookup matches more than one existing user, the request fails clearly and makes no membership change.
+- [ ] An administrator can list all and retrieve individual members for only their household; another household's members are never returned or addressable.
+- [ ] An administrator can change a member between regular-member and administrator roles.
+- [ ] Removing or demoting the last household administrator is rejected; removing a different member succeeds.
+- [ ] A member cannot remove or demote themself when doing so would leave the household without an administrator.
+- [ ] Regular members receive HTTP 403 for add, list, role-change, and remove operations; unauthenticated requests receive HTTP 401 according to the configured API policy.
+- [ ] Failed validation, authorization, and cross-household requests are side-effect free.
+- [ ] Focused API tests cover add, list, retrieve, role changes, remove, normalization, unknown/duplicate/ambiguous emails, last-admin protection, self-demotion/removal, authentication, authorization, and household scoping.
+Out of scope:
+- User creation, open signup, invitations, invite links/codes, and onboarding for unknown emails: [#20](https://github.com/judricomo/homework_01/issues/20)
+- Token issuance and token lifecycle: [#3](https://github.com/judricomo/homework_01/issues/3)
+- Frontend member-management screens: [#18](https://github.com/judricomo/homework_01/issues/18)
+Constraints:
+- Use the Household and Membership models from [#2](https://github.com/judricomo/homework_01/issues/2) and existing-user records; do not create a custom user model.
+- Enforce administrator permissions server-side and scope every read/write by the authenticated administrator's household.
+- Preserve at least one administrator for every household, including on role changes and deletion.
+- Keep API routes, serializers, permissions, and focused tests within the chores domain unless project URL wiring is required.
 
 ## 5. Define chore and difficulty point models
 Status: Groomed in [#5](https://github.com/judricomo/homework_01/issues/5)
