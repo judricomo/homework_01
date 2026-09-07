@@ -253,15 +253,31 @@ Constraints:
 
 ## 11. Build the points ledger and scoring updates
 Status: Groomed in [#11](https://github.com/judricomo/homework_01/issues/11)
-Goal: Record immutable point awards for approved completions.
-Description: Add a PointsLedger model and transaction-safe logic that awards the chore's difficulty points exactly once when a completion is approved. Preserve historical entries so totals remain auditable.
+Goal: Record an immutable, auditable point award for each approved chore completion, exactly once. A member's score must be reproducible from the ledger, while preserving the point value and award timestamp that applied when approval was processed.
+Description: Add a dedicated PointsLedger model and transaction-safe, reusable award service. Consume the approved-completion contract from [#10](https://github.com/judricomo/homework_01/issues/10), snapshot the chore's persisted difficulty-derived points at award time, and make replayed or concurrent processing idempotent. Preserve ledger history so totals remain auditable and household-scoped.
 Acceptance criteria:
-- [ ] Approval creates one ledger entry linked to member, chore, completion, points, and award time.
-- [ ] The entry preserves the difficulty point value used at approval.
-- [ ] Pending and rejected completions create no entries.
-- [ ] Repeated awards are idempotent and ledger entries cannot be edited normally.
-- [ ] All-time totals equal the sum of ledger history.
-- [ ] Focused tests cover values, idempotency, immutability, totals, and rollback.
+- [ ] Processing an approved completion creates exactly one ledger entry containing the completion, submitting member, chore, awarded points, and a timezone-aware award timestamp.
+- [ ] The awarded points are copied from the chore's persisted difficulty-derived point value at award time; changing the chore's difficulty or configured points later does not change the historical ledger entry.
+- [ ] A pending or rejected completion is refused by the award operation and creates no ledger entry; an unknown, missing, cross-household, or otherwise invalid completion is also side-effect free.
+- [ ] An approved completion can be processed repeatedly or concurrently without creating more than one ledger entry; database-backed uniqueness protects the completion-to-award relationship, and retries return or reuse the original award.
+- [ ] A ledger entry is append-only through normal application behavior: no endpoint, service, admin action, or model save path can change its member, chore, completion, points, or award timestamp, and deletion is prevented or explicitly handled without rewriting history.
+- [ ] All-time member totals equal the sum of that member's ledger entries, include zero for a member with no awards, and exclude pending or rejected completions.
+- [ ] Ledger reads and totals are household-scoped; a member or request cannot retrieve, aggregate, or award points for another household through an object ID or filter.
+- [ ] If approval-effect processing or ledger persistence fails, the transaction leaves no partial award and does not leave completion/award state inconsistent; a safe retry can complete the award.
+- [ ] Focused tests cover approved awards, point snapshots after chore edits, pending/rejected/invalid exclusions, duplicate and concurrent retries, append-only protections, totals including zero, household isolation, and rollback behavior.
+Out of scope:
+- Completion submission, review-state transitions, and the approval event contract that triggers this award: [#10](https://github.com/judricomo/homework_01/issues/10)
+- Per-member daily streak calculation and updates: [#12](https://github.com/judricomo/homework_01/issues/12)
+- Fixed milestone badge definitions and awards: [#13](https://github.com/judricomo/homework_01/issues/13)
+- All-time/current-period leaderboard queries and ranking rules: [#14](https://github.com/judricomo/homework_01/issues/14)
+- API-wide route, response, authentication, and scoring documentation: [#16](https://github.com/judricomo/homework_01/issues/16)
+- Frontend score, leaderboard, or history views: [#18](https://github.com/judricomo/homework_01/issues/18)
+Constraints:
+- Use a dedicated ledger model plus a transaction-safe, reusable award service; do not derive totals from mutable completion or chore fields.
+- Consume the approved-completion and chore point contracts from [#5](https://github.com/judricomo/homework_01/issues/5) and [#10](https://github.com/judricomo/homework_01/issues/10); do not reimplement completion state transitions here.
+- Enforce one award per completion with a database constraint and handle replay/concurrency safely with Django transactions and locking where supported.
+- Preserve historical point values and timestamps; use Django timezone-aware timestamps and protect ledger history with restrictive relationships or an equivalent explicit deletion policy.
+- Keep household scoping explicit on every ledger read, total, and award path. Limit changes to the chores domain, migrations, focused tests, and any required integration wiring; do not add unrelated gamification or frontend behavior.
 
 ## 12. Implement streak tracking
 Status: Groomed in [#12](https://github.com/judricomo/homework_01/issues/12)
