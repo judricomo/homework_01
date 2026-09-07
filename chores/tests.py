@@ -222,6 +222,23 @@ class TokenAuthenticationTests(TestCase):
         self.assertEqual(response.data, unknown_response.data)
         self.assertFalse(Token.objects.filter(user=self.user).exists())
 
+    def test_token_endpoint_does_not_sign_up_or_mutate_household_data(self):
+        user_count = self.user_model.objects.count()
+        household_count = Household.objects.count()
+        membership_count = Membership.objects.count()
+
+        response = self.client.post(
+            self.token_url,
+            {"username": "new-user", "password": "new-user-password"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(self.user_model.objects.filter(username="new-user").exists())
+        self.assertEqual(self.user_model.objects.count(), user_count)
+        self.assertEqual(Household.objects.count(), household_count)
+        self.assertEqual(Membership.objects.count(), membership_count)
+
     def test_token_authentication_is_available_without_membership(self):
         token = Token.objects.create(user=self.user)
         self.client.credentials(HTTP_AUTHORIZATION=f"Token {token.key}")
