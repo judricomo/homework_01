@@ -302,9 +302,10 @@ class LeaderboardView(generics.GenericAPIView):
             Q(
                 points_ledger_entries__awarded_at__gte=period_start,
                 points_ledger_entries__awarded_at__lt=period_end,
+                points_ledger_entries__completion__status=Completion.Status.APPROVED,
             )
             if period_start is not None
-            else Q()
+            else Q(points_ledger_entries__completion__status=Completion.Status.APPROVED)
         )
         members = list(
             Membership.objects.filter(

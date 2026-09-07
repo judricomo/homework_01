@@ -2083,6 +2083,23 @@ class LeaderboardAPITests(TestCase):
             completion=completion, points=chore.points, awarded_at=awarded_at,
         )
 
+    def ledger_for_status(self, member, status, awarded_at):
+        chore = Chore.objects.create(
+            household=self.household, name=uuid.uuid4().hex,
+            difficulty=Chore.Difficulty.HARD, assignment_mode=Chore.AssignmentMode.MANUAL,
+        )
+        assignment = ChoreAssignment.create_manual(chore, member, occurrence=uuid.uuid4())
+        completion = Completion.objects.create(
+            household=self.household, chore=chore, assignment=assignment,
+            submitted_by=member, occurrence=assignment.occurrence, status=status,
+            reviewer=self.tie if status != Completion.Status.PENDING else None,
+            reviewed_at=awarded_at if status != Completion.Status.PENDING else None,
+        )
+        return PointsLedger.objects.create(
+            household=self.household, member=member, chore=chore,
+            completion=completion, points=chore.points, awarded_at=awarded_at,
+        )
+
     def test_all_time_is_scoped_ranked_and_preserves_zero_members(self):
         now = timezone.now()
         self.award(self.member, now, Chore.Difficulty.HARD)
@@ -2114,6 +2131,86 @@ class LeaderboardAPITests(TestCase):
         self.assertEqual(response.data["members"][0]["total_points"], 1)
         self.assertEqual(response.data["period_start"], "2026-03-09T00:00:00-07:00")
         self.assertEqual(response.data["period_end"], "2026-03-16T00:00:00-07:00")
+
+    @override_settings(TIME_ZONE="America/Los_Angeles")
+    def test_leaderboards_exclude_pending_and_rejected_completions(self):
+        awarded_at = timezone.make_aware(datetime(2026, 3, 11, 12, 0), timezone.get_current_timezone())
+        self.ledger_for_status(self.member, Completion.Status.PENDING, awarded_at)
+        self.ledger_for_status(self.member, Completion.Status.REJECTED, awarded_at)
+        self.client.force_authenticate(self.member_user)
+
+        with patch("chores.views.timezone.now", return_value=awarded_at):
+            all_time = self.client.get(reverse("leaderboard"))
+            current_period = self.client.get(reverse("leaderboard-current-period"))
+
+        self.assertEqual(all_time.data["members"][0]["total_points"], 0)
+        self.assertEqual(current_period.data["members"][0]["total_points"], 0)
+
+    @override_settings(TIME_ZONE="America/Los_Angeles")
+    def test_current_period_handles_fall_back_dst_transition(self):
+        reference = timezone.make_aware(datetime(2026, 11, 4, 12, 0), timezone.get_current_timezone())
+        before_fallback = datetime.fromisoformat("2026-11-08T08:30:00+00:00")
+        after_fallback = datetime.fromisoformat("2026-11-08T09:30:00+00:00")
+        self.award(self.member, before_fallback)
+        self.award(self.member, after_fallback)
+        self.client.force_authenticate(self.member_user)
+
+        with patch("chores.views.timezone.now", return_value=reference):
+            response = self.client.get(reverse("leaderboard-current-period"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["members"][0]["total_points"], 2)
+        self.assertEqual(response.data["period_start"], "2026-11-02T00:00:00-08:00")
+        self.assertEqual(response.data["period_end"], "2026-11-09T00:00:00-08:00")
+
+    @override_settings(TIME_ZONE="America/Los_Angeles")
+    def test_period_rollover_preserves_all_time_history_and_ledger(self):
+        old_award = timezone.make_aware(datetime(2026, 3, 8, 23, 0), timezone.get_current_timezone())
+        ledger = self.award(self.member, old_award)
+        original_awarded_at = ledger.awarded_at
+        self.client.force_authenticate(self.member_user)
+
+        with patch(
+            "chores.views.timezone.now",
+            return_value=timezone.make_aware(datetime(2026, 3, 16, 12, 0), timezone.get_current_timezone()),
+        ):
+            current_period = self.client.get(reverse("leaderboard-current-period"))
+            all_time = self.client.get(reverse("leaderboard"))
+
+        self.assertEqual(current_period.data["members"][0]["total_points"], 0)
+        self.assertEqual(all_time.data["members"][0]["total_points"], 1)
+        ledger.refresh_from_db()
+        self.assertEqual(ledger.awarded_at, original_awarded_at)
+
+    def test_leaderboard_explicitly_isolates_other_households(self):
+        other_household = Household.objects.create(name="Other leaderboard household")
+        other_user = get_user_model().objects.create_user(username="other-household-member")
+        other_member = Membership.objects.create(
+            household=other_household, user=other_user, role=Membership.Role.MEMBER
+        )
+        other_chore = Chore.objects.create(
+            household=other_household, name="Other chore",
+            difficulty=Chore.Difficulty.HARD, assignment_mode=Chore.AssignmentMode.MANUAL,
+        )
+        other_assignment = ChoreAssignment.create_manual(
+            other_chore, other_member, occurrence=uuid.uuid4()
+        )
+        other_completion = Completion.objects.create(
+            household=other_household, chore=other_chore, assignment=other_assignment,
+            submitted_by=other_member, occurrence=other_assignment.occurrence,
+            status=Completion.Status.APPROVED, reviewer=other_member, reviewed_at=timezone.now(),
+        )
+        PointsLedger.objects.create(
+            household=other_household, member=other_member, chore=other_chore,
+            completion=other_completion, points=other_chore.points, awarded_at=timezone.now(),
+        )
+        self.client.force_authenticate(self.member_user)
+
+        response = self.client.get(reverse("leaderboard"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertNotIn(other_member.id, [row["member_id"] for row in response.data["members"]])
+        self.assertEqual(sum(row["total_points"] for row in response.data["members"]), 0)
 
     def test_inactive_and_unauthenticated_members_cannot_read(self):
         self.member.is_active = False
