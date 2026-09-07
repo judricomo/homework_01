@@ -12,3 +12,13 @@ class IsHouseholdAdministrator(BasePermission):
         return Membership.objects.filter(
             user=request.user, role=Membership.Role.ADMIN
         ).exists()
+
+
+class IsActiveHouseholdMember(BasePermission):
+    message = "An active household membership is required."
+
+    def has_permission(self, request, view):
+        return (
+            request.user.is_authenticated
+            and Membership.objects.filter(user=request.user, is_active=True).exists()
+        )

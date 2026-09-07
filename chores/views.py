@@ -1,14 +1,21 @@
 from django.db import transaction
-from rest_framework import generics, status
+from rest_framework import generics, status, viewsets
+from rest_framework.decorators import action
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
+from django.shortcuts import get_object_or_404
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.utils import timezone
 
-from .models import Membership
-from .permissions import IsHouseholdAdministrator
+from .models import Chore, ChoreAssignment, Membership
+from .permissions import IsActiveHouseholdMember, IsHouseholdAdministrator
 from .serializers import (
     AddMembershipSerializer,
     MembershipRoleSerializer,
     MembershipSerializer,
+    ChoreSerializer,
+    ChoreWorkSerializer,
 )
 
 
@@ -100,3 +107,79 @@ class MembershipDetailView(
                 {"detail": "The household must retain at least one administrator."}
             )
         instance.delete()
+
+
+class ChoreViewSet(viewsets.ModelViewSet):
+    serializer_class = ChoreSerializer
+    permission_classes = (IsHouseholdAdministrator,)
+    pagination_class = type("ChorePagination", (PageNumberPagination,), {"page_size": 50})
+
+    def get_household(self):
+        return Membership.objects.get(
+            user=self.request.user, role=Membership.Role.ADMIN, is_active=True
+        ).household
+
+    def get_queryset(self):
+        return Chore.objects.filter(household=self.get_household()).order_by("id")
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context["household"] = self.get_household()
+        return context
+
+    def perform_create(self, serializer):
+        serializer.save(household=self.get_household())
+
+
+class ChoreQueueViewSet(viewsets.ReadOnlyModelViewSet):
+    permission_classes = (IsActiveHouseholdMember,)
+    serializer_class = ChoreWorkSerializer
+    pagination_class = type("ChorePagination", (PageNumberPagination,), {"page_size": 50})
+
+    def get_membership(self):
+        return Membership.objects.get(user=self.request.user, is_active=True)
+
+    def get_queryset(self):
+        membership = self.get_membership()
+        assigned = Chore.objects.filter(
+            household_id=membership.household_id,
+            assignments__membership=membership,
+            assignments__is_active=True,
+        )
+        claimable = Chore.objects.filter(
+            household_id=membership.household_id,
+            assignment_mode=Chore.AssignmentMode.CLAIM,
+            anchor_date__lte=timezone.localdate(),
+        ).exclude(assignments__is_active=True)
+        return (assigned | claimable).distinct().order_by("id")
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context["membership"] = self.get_membership()
+        return context
+
+    @action(detail=True, methods=["post"])
+    def claim(self, request, pk=None):
+        membership = self.get_membership()
+        chore = get_object_or_404(
+            Chore.objects.filter(
+                household_id=membership.household_id,
+                assignment_mode=Chore.AssignmentMode.CLAIM,
+            ),
+            pk=pk,
+        )
+        if chore.next_due_date() > timezone.localdate():
+            return Response(
+                {"detail": "This claim-pool chore is not currently available."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        try:
+            ChoreAssignment.claim(chore, membership)
+        except (ValidationError, DjangoValidationError) as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        return Response(
+            ChoreWorkSerializer(
+                chore, context=self.get_serializer_context()
+            ).data,
+            status=status.HTTP_201_CREATED,
+        )

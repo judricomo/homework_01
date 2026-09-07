@@ -1,7 +1,9 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
+from django.utils import timezone
 
 from .models import Membership
+from .models import Chore, ChoreAssignment
 
 
 class MembershipSerializer(serializers.ModelSerializer):
@@ -70,3 +72,83 @@ class MembershipRoleSerializer(serializers.ModelSerializer):
         if value not in (Membership.Role.ADMIN, Membership.Role.MEMBER):
             raise serializers.ValidationError("Role must be admin or member.")
         return value
+
+
+class ChoreSerializer(serializers.ModelSerializer):
+    points = serializers.IntegerField(read_only=True)
+    recurrence = serializers.SerializerMethodField()
+    due_date = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Chore
+        fields = (
+            "id", "name", "difficulty", "points", "assignment_mode",
+            "recurrence_mode", "fixed_recurrence", "recurrence_interval_days",
+            "selected_weekdays", "anchor_date", "recurrence", "due_date",
+        )
+        read_only_fields = ("id", "points", "recurrence", "due_date")
+
+    def validate(self, attrs):
+        instance = self.instance or Chore(
+            household=self.context["household"], **attrs
+        )
+        for key, value in attrs.items():
+            setattr(instance, key, value)
+        instance.full_clean(validate_constraints=False)
+        return attrs
+
+    def get_recurrence(self, obj):
+        if obj.recurrence_mode == Chore.RecurrenceMode.FLEXIBLE:
+            return {"mode": "flexible", "interval_days": obj.recurrence_interval_days}
+        return {
+            "mode": "fixed",
+            "rule": obj.fixed_recurrence,
+            "interval_days": obj.recurrence_interval_days,
+            "weekdays": obj.selected_weekdays,
+        }
+
+    def get_due_date(self, obj):
+        return obj.next_due_date().isoformat()
+
+
+class ChoreWorkSerializer(ChoreSerializer):
+    assignee = serializers.SerializerMethodField()
+    claimable = serializers.SerializerMethodField()
+    due_state = serializers.SerializerMethodField()
+    occurrence = serializers.SerializerMethodField()
+
+    class Meta(ChoreSerializer.Meta):
+        fields = ChoreSerializer.Meta.fields + (
+            "assignee", "claimable", "due_state", "occurrence",
+        )
+
+    def _assignment(self, obj):
+        membership = self.context["membership"]
+        return obj.assignments.filter(
+            is_active=True, membership__household_id=membership.household_id
+        ).first()
+
+    def get_assignee(self, obj):
+        assignment = self._assignment(obj)
+        if not assignment:
+            return None
+        return {
+            "membership_id": assignment.membership_id,
+            "username": assignment.membership.user.username,
+        }
+
+    def get_claimable(self, obj):
+        return obj.assignment_mode == Chore.AssignmentMode.CLAIM and not self._assignment(obj)
+
+    def get_due_state(self, obj):
+        due = obj.next_due_date()
+        today = timezone.localdate()
+        if today > due:
+            return "overdue"
+        if today == due:
+            return "due"
+        return "upcoming"
+
+    def get_occurrence(self, obj):
+        assignment = self._assignment(obj)
+        return str(assignment.occurrence) if assignment else None

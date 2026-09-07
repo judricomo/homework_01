@@ -636,6 +636,7 @@ class ChoreAssignmentTests(TransactionTestCase):
         chore.refresh_from_db()
         self.assertEqual(chore.rotation_position, 2)
 
+
     def test_rotation_scheduling_is_idempotent_and_one_member_is_stable(self):
         chore = self.chore(Chore.AssignmentMode.ROTATION)
         member = self.add_rotation_member(chore, "only", 4)
@@ -714,6 +715,104 @@ class ChoreAssignmentTests(TransactionTestCase):
         )
         chore.refresh_from_db()
         self.assertEqual(chore.rotation_position, 2)
+
+
+class ChoreAPITests(TestCase):
+    def setUp(self):
+        self.user_model = get_user_model()
+        self.client = APIClient()
+        self.household = Household.objects.create(name="API household")
+        self.admin = self.user_model.objects.create_user(username="chore-admin")
+        self.member_user = self.user_model.objects.create_user(username="chore-member")
+        self.admin_membership = Membership.objects.create(
+            household=self.household, user=self.admin, role=Membership.Role.ADMIN
+        )
+        self.member_membership = Membership.objects.create(
+            household=self.household, user=self.member_user, role=Membership.Role.MEMBER
+        )
+        self.chore_url = reverse("chore-list")
+
+    def test_admin_crud_scopes_household_and_derives_points(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(
+            self.chore_url,
+            {
+                "name": "Wash dishes",
+                "difficulty": "hard",
+                "assignment_mode": "manual",
+                "recurrence_mode": "fixed",
+                "fixed_recurrence": "daily",
+                "anchor_date": timezone.localdate().isoformat(),
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["points"], 5)
+        chore_id = response.data["id"]
+        response = self.client.patch(
+            reverse("chore-detail", args=[chore_id]),
+            {"name": "Wash the dishes"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        response = self.client.delete(reverse("chore-detail", args=[chore_id]))
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+
+    def test_member_queue_only_shows_assigned_and_available_claim_chores(self):
+        assigned = Chore.objects.create(
+            household=self.household, name="Assigned", difficulty="easy",
+            assignment_mode=Chore.AssignmentMode.MANUAL,
+            anchor_date=timezone.localdate(),
+        )
+        ChoreAssignment.create_manual(assigned, self.member_membership)
+        hidden = Chore.objects.create(
+            household=self.household, name="Unassigned", difficulty="easy",
+            assignment_mode=Chore.AssignmentMode.MANUAL,
+        )
+        claim = Chore.objects.create(
+            household=self.household, name="Claim", difficulty="medium",
+            assignment_mode=Chore.AssignmentMode.CLAIM,
+            anchor_date=timezone.localdate(),
+        )
+        self.client.force_authenticate(self.member_user)
+        response = self.client.get(reverse("my-chore-list"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual([item["name"] for item in response.data["results"]], ["Assigned", "Claim"])
+        self.assertNotIn(hidden.id, [item["id"] for item in response.data["results"]])
+        self.assertEqual(response.data["results"][1]["due_state"], "due")
+
+    def test_member_can_claim_due_pool_item_once(self):
+        chore = Chore.objects.create(
+            household=self.household, name="Take bins", difficulty="easy",
+            assignment_mode=Chore.AssignmentMode.CLAIM,
+            anchor_date=timezone.localdate(),
+        )
+        self.client.force_authenticate(self.member_user)
+        url = reverse("my-chore-claim", args=[chore.id])
+        response = self.client.post(url)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["assignee"]["membership_id"], self.member_membership.id)
+        response = self.client.post(url)
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+
+    def test_invalid_chore_data_and_cross_household_objects_are_rejected(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(
+            self.chore_url,
+            {"name": " ", "difficulty": "easy", "assignment_mode": "manual"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        other = Household.objects.create(name="Other")
+        other_admin = self.user_model.objects.create_user(username="other-admin")
+        Membership.objects.create(household=other, user=other_admin, role=Membership.Role.ADMIN)
+        foreign = Chore.objects.create(
+            household=other, name="Foreign", difficulty="easy",
+            assignment_mode=Chore.AssignmentMode.MANUAL,
+        )
+        response = self.client.get(reverse("chore-detail", args=[foreign.id]))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
 
 
 class ProtectedResourceView(APIView):
