@@ -7,6 +7,7 @@ Roles
 - PM - grooms a task before anyone implements it, follows _docs/team/pm.md
 - Software Engineer - implements one groomed task at a time, follows _docs/team/software-engineer.md
 - QA Engineer - checks finished work against the issue acceptance criteria, follows _docs/team/qa-engineer.md
+- Git Strategy & Integration Lead - owns Git standards, branch strategy, merge quality, and conflict resolution, follows _docs/team/git-strategy-integration-lead.md
 
 Orchestrator
 

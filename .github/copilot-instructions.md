@@ -71,4 +71,5 @@ The planned domain is documented in `_docs/plan.md`, and the implementation sequ
 - Groom tasks before implementation using `_docs/pm.md` and the template in `_docs/task-template.md`.
 - Keep acceptance criteria checkable and document any moved scope as a linked follow-up issue.
 - After implementation, QA must check the running code against every acceptance criterion, run and report tests, and comment a `PASS` or `FAIL` verdict without changing code; follow `_docs/team/qa-engineer.md`.
+- Use the Git Strategy & Integration Lead workflow for branch synchronization, merge decisions, conflict resolution, and integration review; follow `_docs/team/git-strategy-integration-lead.md`.
 - Commit regularly and keep task-process guidance in `_docs/process.md`.
