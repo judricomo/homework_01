@@ -1240,6 +1240,250 @@ class BadgeAwardTests(TestCase):
             BadgeAward.evaluate_for_completion(rejected)
         self.assertFalse(BadgeAward.objects.exists())
 
+    def approved_completion(self, member=None, chore=None, submitted_at=None):
+        member = member or self.member
+        chore = chore or self.chore
+        assignment = ChoreAssignment.create_manual(chore, member)
+        completion = Completion.objects.create(
+            household=member.household,
+            chore=chore,
+            assignment=assignment,
+            submitted_by=member,
+            occurrence=assignment.occurrence,
+            status=Completion.Status.APPROVED,
+            reviewer=self.reviewer,
+            reviewed_at=timezone.now(),
+        )
+        if submitted_at is not None:
+            Completion.objects.filter(pk=completion.pk).update(submitted_at=submitted_at)
+            completion.refresh_from_db()
+        return completion
+
+    def test_every_badge_has_below_exact_and_above_threshold_coverage(self):
+        for badge in BadgeCatalog.ALL:
+            with self.subTest(badge=badge["identifier"]):
+                member = Membership.objects.create(
+                    household=self.household,
+                    user=get_user_model().objects.create_user(
+                        username=f"threshold-{badge['identifier']}"
+                    ),
+                    role=Membership.Role.MEMBER,
+                )
+                chore = Chore.objects.create(
+                    household=self.household,
+                    name=f"Threshold {badge['identifier']}",
+                    difficulty=Chore.Difficulty.EASY,
+                    assignment_mode=Chore.AssignmentMode.MANUAL,
+                )
+                completion = self.approved_completion(member, chore)
+                if badge["metric"] == "current_streak":
+                    values = (6, 7, 8)
+                    for value in values:
+                        streak = MemberStreak.objects.get(membership=member)
+                        streak.current_streak = value
+                        streak.save(update_fields=["current_streak", "updated_at"])
+                        awards = BadgeAward.evaluate_for_completion(completion)
+                        self.assertEqual(
+                            any(a.badge_identifier == badge["identifier"] for a in awards),
+                            value >= badge["threshold"],
+                        )
+                else:
+                    target = badge["threshold"]
+                    if badge["metric"] == "approved_points":
+                        PointsLedger.award_for_completion(completion)
+                    else:
+                        for approved in Completion.objects.filter(
+                            submitted_by=member, status=Completion.Status.APPROVED
+                        ):
+                            PointsLedger.award_for_completion(approved)
+                    metric_values = (
+                        (target - 1, target, target + 1)
+                        if badge["metric"] == "approved_completions"
+                        else (99, 100, 101)
+                    )
+                    for value in metric_values:
+                        if badge["metric"] == "approved_completions":
+                            # Add or remove only test data for this isolated member.
+                            current = Completion.objects.filter(
+                                submitted_by=member, status=Completion.Status.APPROVED
+                            ).count()
+                            while current < value:
+                                self.approved_completion(member, chore)
+                                current += 1
+                        else:
+                            current = PointsLedger.total_for_member(member)
+                            while current < value:
+                                extra = self.approved_completion(member, chore)
+                                PointsLedger.award_for_completion(extra)
+                                current += chore.points
+                        awards = BadgeAward.evaluate_for_completion(completion)
+                        self.assertEqual(
+                            any(a.badge_identifier == badge["identifier"] for a in awards),
+                            value >= target,
+                        )
+
+    def test_streak_gap_requires_seven_new_consecutive_days(self):
+        for offset in range(6):
+            MemberStreak.record_approved_completion(
+                self.approved_completion(
+                    submitted_at=timezone.make_aware(
+                        datetime(2026, 5, 1 + offset)
+                    )
+                )
+            )
+        self.assertFalse(
+            BadgeAward.objects.filter(
+                member=self.member, badge_identifier="seven_day_streak"
+            ).exists()
+        )
+        completion = self.approved_completion(
+            submitted_at=timezone.make_aware(datetime(2026, 5, 8))
+        )
+        MemberStreak.record_approved_completion(completion)
+        BadgeAward.evaluate_for_completion(completion)
+        self.assertFalse(
+            BadgeAward.objects.filter(
+                member=self.member, badge_identifier="seven_day_streak"
+            ).exists()
+        )
+        for offset in range(1, 7):
+            completion = self.approved_completion(
+                submitted_at=timezone.make_aware(datetime(2026, 5, 8 + offset))
+            )
+            MemberStreak.record_approved_completion(completion)
+        BadgeAward.evaluate_for_completion(completion)
+        self.assertTrue(
+            BadgeAward.objects.filter(
+                member=self.member, badge_identifier="seven_day_streak"
+            ).exists()
+        )
+
+    def test_successful_approval_directly_awards_badge(self):
+        for offset in range(6):
+            MemberActivityDay.objects.create(
+                membership=self.member,
+                household=self.household,
+                activity_date=date(2026, 6, 1 + offset),
+            )
+        streak = MemberStreak.objects.get(membership=self.member)
+        streak.current_streak = 6
+        streak.save(update_fields=["current_streak", "updated_at"])
+        assignment = ChoreAssignment.create_manual(self.chore, self.member)
+        completion = Completion.submit(
+            membership=self.member, chore=self.chore, occurrence=assignment.occurrence
+        )
+        Completion.objects.filter(pk=completion.pk).update(
+            submitted_at=timezone.make_aware(datetime(2026, 6, 7))
+        )
+        Completion.review(
+            completion_id=completion.pk,
+            reviewer=self.reviewer,
+            status=Completion.Status.APPROVED,
+        )
+        self.assertTrue(
+            BadgeAward.objects.filter(
+                member=self.member, badge_identifier="seven_day_streak"
+            ).exists()
+        )
+
+    def test_badge_identifiers_are_stable_and_awards_are_not_revoked(self):
+        completion = self.make_completion()
+        PointsLedger.award_for_completion(completion)
+        MemberStreak.objects.filter(membership=self.member).update(
+            current_streak=7, best_streak=7
+        )
+        award = BadgeAward.evaluate_for_completion(completion)[0]
+        self.assertEqual(
+            {badge["identifier"] for badge in BadgeCatalog.ALL},
+            {"seven_day_streak", "hundred_points", "fifty_completions"},
+        )
+        award.badge_identifier = "renamed_badge"
+        with self.assertRaises(ValidationError):
+            award.save()
+        MemberActivityDay.objects.filter(membership=self.member).delete()
+        Completion.objects.filter(pk=completion.pk).update(status=Completion.Status.REJECTED)
+        self.assertTrue(BadgeAward.objects.filter(pk=award.pk).exists())
+        self.assertEqual(
+            BadgeAward.objects.get(pk=award.pk).badge_identifier, "seven_day_streak"
+        )
+
+    def test_cross_household_evaluation_cannot_award_local_member(self):
+        other_household = Household.objects.create(name="Other badge household")
+        other_member = Membership.objects.create(
+            household=other_household,
+            user=get_user_model().objects.create_user(username="other-badge-member"),
+            role=Membership.Role.MEMBER,
+        )
+        other_chore = Chore.objects.create(
+            household=other_household,
+            name="Other badge chore",
+            difficulty=Chore.Difficulty.EASY,
+            assignment_mode=Chore.AssignmentMode.MANUAL,
+        )
+        completion = self.approved_completion(other_member, other_chore)
+        Completion.objects.filter(pk=completion.pk).update(household=self.household.pk)
+        completion.refresh_from_db()
+        with self.assertRaises(ValidationError):
+            BadgeAward.evaluate_for_completion(completion)
+        self.assertFalse(BadgeAward.objects.exists())
+
+
+class BadgeAwardConcurrencyTests(TransactionTestCase):
+    reset_sequences = True
+
+    def setUp(self):
+        user_model = get_user_model()
+        self.household = Household.objects.create(name="Concurrent badge household")
+        self.member = Membership.objects.create(
+            household=self.household,
+            user=user_model.objects.create_user(username="concurrent-badge-member"),
+            role=Membership.Role.MEMBER,
+        )
+        self.reviewer = Membership.objects.create(
+            household=self.household,
+            user=user_model.objects.create_user(username="concurrent-badge-reviewer"),
+            role=Membership.Role.MEMBER,
+        )
+        self.chore = Chore.objects.create(
+            household=self.household,
+            name="Concurrent badge chore",
+            difficulty=Chore.Difficulty.HARD,
+            assignment_mode=Chore.AssignmentMode.MANUAL,
+        )
+        assignment = ChoreAssignment.create_manual(self.chore, self.member)
+        self.completion = Completion.objects.create(
+            household=self.household, chore=self.chore, assignment=assignment,
+            submitted_by=self.member, occurrence=assignment.occurrence,
+            status=Completion.Status.APPROVED, reviewer=self.reviewer,
+            reviewed_at=timezone.now(),
+        )
+        PointsLedger.award_for_completion(self.completion)
+        MemberStreak.objects.filter(membership=self.member).update(current_streak=7)
+
+    def test_concurrent_evaluations_store_one_award(self):
+        barrier = threading.Barrier(2)
+
+        def evaluate():
+            close_old_connections()
+            try:
+                barrier.wait()
+                return BadgeAward.evaluate_for_completion(self.completion.pk)
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(lambda _: evaluate(), (1, 2)))
+        self.assertEqual(
+            {awards[0].pk for awards in results},
+            {BadgeAward.objects.get(member=self.member, badge_identifier="seven_day_streak").pk},
+        )
+        self.assertEqual(
+            BadgeAward.objects.filter(
+                member=self.member, badge_identifier="seven_day_streak"
+            ).count(),
+            1,
+        )
+
 
 class ProtectedResourceView(APIView):
     def get(self, request):
