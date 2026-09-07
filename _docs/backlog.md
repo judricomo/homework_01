@@ -318,15 +318,33 @@ Implementation:
 
 ## 13. Define and award milestone badges
 Status: Groomed in [#13](https://github.com/judricomo/homework_01/issues/13)
-Goal: Automatically award the fixed v1 badge set.
-Description: Define the predefined badge catalog and award member badges when approved activity crosses configured thresholds. Badge awards must be durable and idempotent.
+Goal: Define the fixed v1 badge catalog and automatically award each milestone badge to a household member when approved activity causes the qualifying metric to reach or exceed its threshold. Awards must be durable, household-scoped, and safe to repeat.
+Description: Implement the three fixed v1 milestones—7 consecutive approved-activity days, 100 approved points, and 50 approved chore completions—using the durable points and streak contracts. Evaluate badges only after successful approval effects and preserve immutable award evidence.
 Acceptance criteria:
-- [ ] The fixed catalog includes 7-day streak, 100 points, and 50 approved chores milestones.
-- [ ] Each badge has a stable identifier, name, description, and threshold rule.
-- [ ] Awards occur only after approved activity updates the relevant metric.
-- [ ] Pending and rejected activity never awards badges.
-- [ ] Each member receives each badge at most once and awards remain durable.
-- [ ] Focused tests cover below, at, and above threshold plus repeated checks.
+- [ ] The fixed catalog contains exactly these v1 milestones: a 7-consecutive-day approved-activity streak, 100 approved points, and 50 approved chore completions.
+- [ ] Each catalog entry has a stable, immutable identifier, display name, description, metric, integer threshold, and documented threshold semantics.
+- [ ] A 7-day streak badge is awarded only when the member's durable streak reaches 7 consecutive activity days; a gap resets the current streak and does not qualify until 7 new consecutive days are reached.
+- [ ] A 100-point badge is awarded only when the member's approved point total reaches at least 100; pending or rejected completions contribute zero points.
+- [ ] A 50-chores badge is awarded only when the member's count of approved chore completions reaches at least 50; each approved completion is counted once.
+- [ ] Badge evaluation runs after the approval transaction has successfully updated the relevant points, streak, or approved-completion metric, and an approval that is pending, rejected, or otherwise unsuccessful creates no award.
+- [ ] Values below each threshold produce no award, the exact threshold produces one award, and values above the threshold also produce one award.
+- [ ] Re-running evaluation for the same approval, replaying an already-processed approval, or concurrently evaluating the same member/badge never creates duplicate awards.
+- [ ] An award stores the member, fixed badge identifier, and award timestamp, remains queryable after later metric changes, and is not revoked when a completion is later edited or deleted under the project's history rules.
+- [ ] Badge evaluation is restricted to the completion's household/member scope and cannot award a badge to another household's member.
+- [ ] Focused tests cover every catalog entry, below/exactly/above thresholds, streak gaps, pending and rejected completions, duplicate/replayed evaluation, concurrent-safe uniqueness, and durable award records.
+Out of scope:
+- Admin-defined, user-defined, or otherwise configurable badge definitions; tracked in [#21](https://github.com/judricomo/homework_01/issues/21).
+- Points calculation and the immutable points ledger; consume the approved-award contract from [#11](https://github.com/judricomo/homework_01/issues/11).
+- Streak calculation and activity-day state; consume the approved-activity contract from [#12](https://github.com/judricomo/homework_01/issues/12).
+- Completion submission, approval/rejection workflow, and review permissions; consume [#10](https://github.com/judricomo/homework_01/issues/10).
+- Badge-management API/UI, badge presentation beyond the implementation's focused surface, and broader API documentation; follow up in [#16](https://github.com/judricomo/homework_01/issues/16) and [#18](https://github.com/judricomo/homework_01/issues/18).
+- Per-chore, on-time, rolling-window, seasonal, or retroactive badge types; no follow-up is implied unless product scope is explicitly expanded.
+Constraints:
+- Keep the implementation in the `chores` domain, its migrations, focused tests, and the required approval-effect integration.
+- Keep the catalog centrally defined and fixed for v1; do not add custom-badge CRUD or user-configurable thresholds.
+- Derive badge metrics only from approved completions and the durable points/streak state; pending and rejected records must be ignored.
+- Use timezone-aware Django datetimes, database constraints, transactions, and appropriate locking/constraint handling so retries and concurrent approvals are safe.
+- Preserve household scoping and immutable historical award evidence; follow existing deletion semantics rather than silently rewriting award history.
 
 ## 14. Add all-time and current-period leaderboards
 Status: Groomed in [#14](https://github.com/judricomo/homework_01/issues/14)
