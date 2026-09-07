@@ -1,7 +1,7 @@
 # Household Chores Tool Backlog
 
 ## 1. Set up an empty Django project with a passing test
-Status: Completed in PR #17
+Status: Completed in [#1](https://github.com/judricomo/homework_01/issues/1) and PR [#17](https://github.com/judricomo/homework_01/pull/17)
 Goal: Establish a runnable Django and Django REST Framework project baseline.
 Description: Configure the project structure, dependencies, settings, and test runner without implementing household or chore behavior. Add one minimal test that proves the empty project loads successfully.
 Acceptance criteria:
@@ -17,7 +17,7 @@ Implementation:
 - Documented setup, run, check, and test commands in `README.md`.
 
 ## 2. Define household and membership data models
-Status: Groomed in [#2](https://github.com/judricomo/homework_01/issues/2)
+Status: Completed in [#2](https://github.com/judricomo/homework_01/issues/2) ([QA: PASS](https://github.com/judricomo/homework_01/issues/2#issuecomment-5563622890))
 Goal: Represent one household and its members with explicit roles.
 Description: Create the Household and Membership models needed for a single-household v1 system. Support administrator and regular-member roles, enforce valid user membership, and include the relationships needed by later features.
 Acceptance criteria:
@@ -29,7 +29,7 @@ Acceptance criteria:
 - [ ] Migrations apply cleanly and focused model tests cover valid and invalid cases.
 
 ## 3. Configure token authentication and API access
-Status: Groomed in [#3](https://github.com/judricomo/homework_01/issues/3)
+Status: Completed in [#3](https://github.com/judricomo/homework_01/issues/3) ([QA: PASS](https://github.com/judricomo/homework_01/issues/3#issuecomment-5563824827))
 Goal: Enable existing Django users to authenticate through Django REST Framework token authentication and use authenticated API resources.
 Description: Add the documented token endpoint and centrally configured token authentication and permissions. Keep account creation, membership management, and household authorization outside this task.
 Acceptance criteria:
@@ -56,7 +56,7 @@ Constraints:
 - Keep authentication separate from household authorization so a valid token cannot grant access to another household's data.
 
 ## 4. Implement administrator membership management
-Status: Groomed in [#4](https://github.com/judricomo/homework_01/issues/4)
+Status: Completed in [#4](https://github.com/judricomo/homework_01/issues/4) ([QA: PASS](https://github.com/judricomo/homework_01/issues/4#issuecomment-5563853771))
 Goal: Let a household administrator add, view, update, and remove members in the single v1 household.
 Description: Build the authenticated membership-management API on top of the Household and Membership models. An administrator can add an existing user by email, list members, change member roles, and remove members while preserving household isolation and at least one administrator. Unknown users are rejected; signup and invitation flows remain separate.
 Acceptance criteria:
@@ -82,7 +82,7 @@ Constraints:
 - Keep API routes, serializers, permissions, and focused tests within the chores domain unless project URL wiring is required.
 
 ## 5. Define chore and difficulty point models
-Status: Groomed in [#5](https://github.com/judricomo/homework_01/issues/5)
+Status: Completed in [#5](https://github.com/judricomo/homework_01/issues/5) ([QA: PASS](https://github.com/judricomo/homework_01/issues/5#issuecomment-5563881911))
 Goal: Define the foundational Chore model with a controlled difficulty and deterministic, difficulty-derived points.
 Description: Create the Chore model associated with exactly one household. Require a trimmed non-blank name and one of the `easy`, `medium`, or `hard` difficulty choices, using the canonical mapping `easy = 1`, `medium = 3`, and `hard = 5`. Keep point derivation in one reusable domain location and reject conflicting client or model values.
 Acceptance criteria:
@@ -105,7 +105,7 @@ Constraints:
 - Use the Household relationship from [#2](https://github.com/judricomo/homework_01/issues/2) and preserve the household boundary for downstream work.
 
 ## 6. Add chore assignment modes and assignments
-Status: Groomed in [#6](https://github.com/judricomo/homework_01/issues/6)
+Status: Completed in [#6](https://github.com/judricomo/homework_01/issues/6) ([QA: PASS](https://github.com/judricomo/homework_01/issues/6#issuecomment-5563932494))
 Goal: Extend each chore with one assignment mode and provide household-scoped assignment records for manual responsibility and claim-pool responsibility.
 Description: Add the assignment-mode and assignment data needed by later APIs and rotation scheduling. Implement validated manual assignment and transaction-safe claim behavior in the domain layer, while keeping scheduling and HTTP endpoint work in their dedicated issues.
 Acceptance criteria:
@@ -132,7 +132,7 @@ Constraints:
 - Keep rotation scheduling policy and recurrence policy out of this task; expose only the data and invariants their follow-up issues require.
 
 ## 7. Implement rotation scheduling
-Status: Groomed in [#7](https://github.com/judricomo/homework_01/issues/7)
+Status: Completed in [#7](https://github.com/judricomo/homework_01/issues/7) ([QA: PASS](https://github.com/judricomo/homework_01/issues/7#issuecomment-5563966452))
 Goal: Automatically assign rotation chores to household members in sequence.
 Description: Add the scheduling data and domain service for assigning each due rotation-chore occurrence to the next eligible household member. Preserve a deterministic order and cursor so retries, membership changes, and empty eligibility do not produce duplicate or surprising assignments.
 Acceptance criteria:
@@ -160,7 +160,7 @@ Constraints:
 - Make ordering and eligibility rules explicit and deterministic, and preserve assignment history needed by completion and leaderboard follow-ups.
 
 ## 8. Add fixed and flexible recurrence rules
-Status: Groomed in [#8](https://github.com/judricomo/homework_01/issues/8)
+Status: Completed in [#8](https://github.com/judricomo/homework_01/issues/8) ([QA: PASS](https://github.com/judricomo/homework_01/issues/8#issuecomment-5564000278))
 Goal: Calculate the next due local date for a chore from its configured recurrence rule and anchor date. The result must be deterministic, timezone-aware, and based on approved completion history only where the flexible rule requires it.
 Description: Support fixed/calendar recurrence (daily, weekly, every N days, or selected weekdays) and flexible recurrence (N days after the most recent approved completion). Use the project timezone and explicit local-date semantics so engineers and API consumers get the same answer at date boundaries and daylight-saving transitions.
 Acceptance criteria:
@@ -188,7 +188,7 @@ Constraints:
 - Keep this task independent of HTTP/API, assignment, completion-review, notification, and gamification workflows; integrate through their documented follow-up contracts.
 
 ## 9. Implement chore listing and assignment APIs
-Status: Groomed in [#9](https://github.com/judricomo/homework_01/issues/9)
+Status: Completed in [#9](https://github.com/judricomo/homework_01/issues/9) ([QA: PASS](https://github.com/judricomo/homework_01/issues/9#issuecomment-5564097600))
 Goal: Give household members a secure, household-scoped API for managing chores and viewing currently assignable work.
 Description: Expose Django REST Framework endpoints for administrator chore CRUD and member work queues. Members may see only their assigned chores or currently claimable claim-pool chores; responses include assignment, recurrence, difficulty, derived points, occurrence identity, and local due-state context. Claiming must remain transaction-safe and all visibility must be explicitly scoped to the member's household. This issue consumes assignment and recurrence domain contracts; it does not define completion lifecycle or recurrence-calendar calculation.
 Acceptance criteria:
@@ -220,7 +220,7 @@ Constraints:
 - Do not add multi-tenancy, self-service signup, external notifications, photo verification, custom badges, or per-chore streaks.
 
 ## 10. Implement completion submission and verification
-Status: Groomed in [#10](https://github.com/judricomo/homework_01/issues/10)
+Status: Completed in [#10](https://github.com/judricomo/homework_01/issues/10) ([QA: PASS](https://github.com/judricomo/homework_01/issues/10#issuecomment-5564172642))
 Goal: Require approval before a chore earns credit.
 Description: Let an active, eligible household member submit one self-reported completion for a stable chore occurrence, then let a different household member approve or reject it. Preserve immutable review history, enforce household and assignment boundaries, and make approval the only state consumable by gamification follow-ups.
 Acceptance criteria:
@@ -252,7 +252,7 @@ Constraints:
 - Document routes, fields, status codes, transition errors, retry/idempotency behavior, and rejected-occurrence policy in [#16](https://github.com/judricomo/homework_01/issues/16).
 
 ## 11. Build the points ledger and scoring updates
-Status: Groomed in [#11](https://github.com/judricomo/homework_01/issues/11)
+Status: Completed in [#11](https://github.com/judricomo/homework_01/issues/11) ([QA: PASS](https://github.com/judricomo/homework_01/issues/11#issuecomment-5564251523))
 Goal: Record an immutable, auditable point award for each approved chore completion, exactly once. A member's score must be reproducible from the ledger, while preserving the point value and award timestamp that applied when approval was processed.
 Description: Add a dedicated PointsLedger model and transaction-safe, reusable award service. Consume the approved-completion contract from [#10](https://github.com/judricomo/homework_01/issues/10), snapshot the chore's persisted difficulty-derived points at award time, and make replayed or concurrent processing idempotent. Preserve ledger history so totals remain auditable and household-scoped.
 Acceptance criteria:
@@ -280,7 +280,7 @@ Constraints:
 - Keep household scoping explicit on every ledger read, total, and award path. Limit changes to the chores domain, migrations, focused tests, and any required integration wiring; do not add unrelated gamification or frontend behavior.
 
 ## 12. Implement streak tracking
-Status: Completed
+Status: Completed in [#12](https://github.com/judricomo/homework_01/issues/12) ([QA: PASS](https://github.com/judricomo/homework_01/issues/12#issuecomment-5564297356))
 Goal: Track one household member's daily approved-completion activity as a durable current streak and historical best streak.
 Description: Derive per-person daily streaks from approved completions only. Use the completion's submitted timestamp converted to the configured project timezone as the activity date, preserve activity-day evidence, and make recalculation safe for duplicate, concurrent, and out-of-order approval effects.
 Acceptance criteria:
@@ -317,7 +317,7 @@ Implementation:
 - Streak and activity history cascade with membership/household deletion to preserve existing deletion semantics.
 
 ## 13. Define and award milestone badges
-Status: Implemented in [#13](https://github.com/judricomo/homework_01/issues/13)
+Status: Completed in [#13](https://github.com/judricomo/homework_01/issues/13) ([QA: PASS](https://github.com/judricomo/homework_01/issues/13#issuecomment-5564356682))
 Goal: Define the fixed v1 badge catalog and automatically award each milestone badge to a household member when approved activity causes the qualifying metric to reach or exceed its threshold. Awards must be durable, household-scoped, and safe to repeat.
 Description: Implement the three fixed v1 milestones—7 consecutive approved-activity days, 100 approved points, and 50 approved chore completions—using the durable points and streak contracts. Evaluate badges only after successful approval effects and preserve immutable award evidence.
 Acceptance criteria:
@@ -347,7 +347,7 @@ Constraints:
 - Preserve household scoping and immutable historical award evidence; follow existing deletion semantics rather than silently rewriting award history.
 
 ## 14. Add all-time and current-period leaderboards
-Status: Groomed in [#14](https://github.com/judricomo/homework_01/issues/14)
+Status: Completed in [#14](https://github.com/judricomo/homework_01/issues/14) ([QA: PASS](https://github.com/judricomo/homework_01/issues/14#issuecomment-5564397462))
 Goal: Expose household-scoped rankings that let members compare approved points earned all time and during the current calendar week.
 Description: Build read-only leaderboard endpoints for all-time totals and the current calendar week. Include every active household member, including members with zero qualifying points, and return each member's total and deterministic rank. The current period is Monday 00:00:00 through the following Monday 00:00:00 in Django's configured project timezone, represented as a half-open interval; the response exposes the period type, timezone, start, and exclusive end. Preserve the immutable points ledger across period boundaries.
 Acceptance criteria:
@@ -374,7 +374,7 @@ Constraints:
 - Document endpoint paths, response fields, rank semantics, authorization, and error behavior in the API documentation follow-up [#16](https://github.com/judricomo/homework_01/issues/16).
 
 ## 15. Add in-app due and overdue notification surfaces
-Status: Groomed in [#15](https://github.com/judricomo/homework_01/issues/15)
+Status: Completed in [#15](https://github.com/judricomo/homework_01/issues/15) ([QA: PASS](https://github.com/judricomo/homework_01/issues/15#issuecomment-5564444350))
 Goal: Give an authenticated household member a read-only in-app API surface that clearly separates their currently due chores from overdue chores. Use the same occurrence, recurrence, assignment, approval, and project-timezone contracts as the chore APIs; do not send notifications outside the application.
 Acceptance criteria:
 - [ ] An authenticated active household member can retrieve a successful response containing separate `due` and `overdue` collections for that member; the endpoint is read-only and does not mutate chores, assignments, occurrences, or completions.
@@ -406,7 +406,7 @@ Constraints:
 - Do not introduce multi-tenancy, self-service signup, photo verification, custom badges, per-chore streaks, or external notifications.
 
 ## 16. Document API behavior and v1 scope
-Status: Groomed in [#16](https://github.com/judricomo/homework_01/issues/16)
+Status: Completed in [#16](https://github.com/judricomo/homework_01/issues/16) ([QA: PASS](https://github.com/judricomo/homework_01/issues/16#issuecomment-5564471530))
 Documentation: [`_docs/api.md`](_docs/api.md)
 Goal: Publish a source-of-truth contract for the implemented v1 API so frontend developers and contributors can use it without inferring undocumented behavior.
 Description: Document authentication, every implemented endpoint, request/response/error shapes, role permissions, household isolation, state transitions, recurrence and due/overdue rules, scoring, streaks, badges, leaderboards, timezone boundaries, and explicit v1 exclusions. Verify examples and unresolved decisions against the running implementation rather than inventing behavior.

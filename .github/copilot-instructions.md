@@ -70,4 +70,5 @@ The planned domain is documented in `_docs/plan.md`, and the implementation sequ
 - Read the issue's acceptance criteria before starting and before closing the task.
 - Groom tasks before implementation using `_docs/pm.md` and the template in `_docs/task-template.md`.
 - Keep acceptance criteria checkable and document any moved scope as a linked follow-up issue.
+- After implementation, QA must check the running code against every acceptance criterion, run and report tests, and comment a `PASS` or `FAIL` verdict without changing code; follow `_docs/team/qa-engineer.md`.
 - Commit regularly and keep task-process guidance in `_docs/process.md`.
