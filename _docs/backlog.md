@@ -375,19 +375,35 @@ Constraints:
 
 ## 15. Add in-app due and overdue notification surfaces
 Status: Groomed in [#15](https://github.com/judricomo/homework_01/issues/15)
-Goal: Show members which chores need attention without external notifications.
-Description: Provide API or dashboard data that identifies chores due soon and overdue for the requesting member. Keep v1 notifications entirely in-app with no email, push, or chat integration.
+Goal: Give an authenticated household member a read-only in-app API surface that clearly separates their currently due chores from overdue chores. Use the same occurrence, recurrence, assignment, approval, and project-timezone contracts as the chore APIs; do not send notifications outside the application.
 Acceptance criteria:
-- [ ] An authenticated member can retrieve their due chores.
-- [ ] Overdue results use the same recurrence and timezone rules as chore listings.
-- [ ] Responses include chore, assignment, due-state, and recurrence context.
-- [ ] Approved, pending, and rejected occurrences follow documented due-state behavior.
-- [ ] Members cannot see another household's due/overdue data.
-- [ ] Empty results have a documented successful response shape.
-- [ ] No external notification side effect is introduced.
-- [ ] Focused API tests cover due, overdue, completion states, empty, and inaccessible cases.
-Follow-up:
-- Frontend dashboard rendering: [#18](https://github.com/judricomo/homework_01/issues/18)
+- [ ] An authenticated active household member can retrieve a successful response containing separate `due` and `overdue` collections for that member; the endpoint is read-only and does not mutate chores, assignments, occurrences, or completions.
+- [ ] A current occurrence is in `due` when its local due date/time is reached and it has no approved completion; an occurrence whose due date/time has passed is in `overdue`; future occurrences are in neither collection. The boundary comparison is explicit and tested.
+- [ ] Each returned item identifies the chore and occurrence, assigned member or claim-pool state, local due date/time, current due state, and recurrence context sufficient for a client to explain why it is due or overdue.
+- [ ] Results use the recurrence service and the same configured project timezone as chore listing, including local-midnight and daylight-saving boundaries; this task does not recalculate recurrence independently.
+- [ ] An approved completion removes that occurrence from the response and allows the recurrence contract to determine the next occurrence; pending completions leave the occurrence in its calculated due or overdue collection.
+- [ ] A rejected completion leaves the occurrence in its calculated due or overdue collection, preserves the assignment lifecycle, and never causes points, streaks, badges, or recurrence advancement.
+- [ ] Only occurrences currently assigned to the requesting member, or currently claimable under the documented claim-pool visibility contract, are returned; unassigned, inactive-member, unavailable-claim, and future occurrences are excluded without exposing another member's data.
+- [ ] An authenticated member cannot retrieve another household's items, including by supplying chore or occurrence identifiers or filters; cross-household and unknown identifiers have the documented non-disclosing error behavior.
+- [ ] Unauthenticated requests return HTTP 401, and authenticated users without an active household membership receive the documented authorization response without data.
+- [ ] Empty `due` and `overdue` collections return the documented successful response shape, and ordering plus any result bound/pagination rule is deterministic and documented.
+- [ ] Focused API tests cover due-at-boundary, overdue, future, approved, pending, rejected, recurrence/timezone boundary, assignment visibility, empty, authentication, authorization, identifier/filter, and cross-household cases.
+- [ ] The implementation introduces no email, push, chat, webhook, scheduler, background delivery, or other external notification side effect; focused tests verify the surface is read-only.
+Out of scope:
+- Token authentication and token issuance: [#3](https://github.com/judricomo/homework_01/issues/3).
+- Household and membership model invariants: [#2](https://github.com/judricomo/homework_01/issues/2).
+- Assignment visibility, claim behavior, and recurrence calculation: [#6](https://github.com/judricomo/homework_01/issues/6), [#7](https://github.com/judricomo/homework_01/issues/7), and [#8](https://github.com/judricomo/homework_01/issues/8).
+- Chore listing/assignment APIs and their general visibility contract: [#9](https://github.com/judricomo/homework_01/issues/9).
+- Completion submission, approval/rejection transitions, and completion side effects: [#10](https://github.com/judricomo/homework_01/issues/10).
+- API-wide route, field, status-code, and error documentation: [#16](https://github.com/judricomo/homework_01/issues/16).
+- Frontend dashboard rendering: [#18](https://github.com/judricomo/homework_01/issues/18).
+- Email, push, chat, and other external notification delivery are excluded by the v1 scope in [_docs/plan.md](_docs/plan.md); no follow-up is implied by this task.
+Constraints:
+- Keep the surface authenticated, household-scoped, read-only, and frontend-agnostic; wire it through the chores API without adding a notification provider or delivery worker.
+- Consume the occurrence, assignment, recurrence, timezone, and completion contracts from [#6](https://github.com/judricomo/homework_01/issues/6)–[#10](https://github.com/judricomo/homework_01/issues/10); do not duplicate their state transitions or calendar arithmetic.
+- Scope every queryset and identifier lookup through the requesting member's active household. Do not use client-supplied household IDs to authorize access.
+- Keep response semantics stable and document the route, fields, ordering, empty shape, due-state boundary, and errors in [#16](https://github.com/judricomo/homework_01/issues/16).
+- Do not introduce multi-tenancy, self-service signup, photo verification, custom badges, per-chore streaks, or external notifications.
 
 ## 16. Document API behavior and v1 scope
 Status: Groomed in [#16](https://github.com/judricomo/homework_01/issues/16)
