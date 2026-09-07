@@ -197,24 +197,37 @@ class MembershipManagementAPITests(TestCase):
         membership.refresh_from_db()
         self.assertEqual(membership.role, Membership.Role.ADMIN)
 
+        response = self.client.patch(
+            reverse("membership-detail", args=[membership.id]),
+            {"role": Membership.Role.MEMBER},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        membership.refresh_from_db()
+        self.assertEqual(membership.role, Membership.Role.MEMBER)
+
         response = self.client.delete(
             reverse("membership-detail", args=[membership.id])
         )
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(Membership.objects.filter(pk=membership.id).exists())
 
-    def test_last_admin_cannot_be_demoted_or_removed(self):
+    def test_last_admin_cannot_demote_or_remove_themself(self):
         detail_url = reverse("membership-detail", args=[self.admin_membership.id])
+        before_count = Membership.objects.count()
 
         response = self.client.patch(
             detail_url, {"role": Membership.Role.MEMBER}, format="json"
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.admin_membership.refresh_from_db()
         self.assertEqual(self.admin_membership.role, Membership.Role.ADMIN)
+        self.assertEqual(Membership.objects.count(), before_count)
 
         response = self.client.delete(detail_url)
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertTrue(Membership.objects.filter(pk=self.admin_membership.id).exists())
+        self.assertEqual(Membership.objects.count(), before_count)
 
     def test_regular_member_is_forbidden_and_other_household_is_scoped_out(self):
         member = self.add_user("regular", "regular@example.com")
@@ -228,6 +241,7 @@ class MembershipManagementAPITests(TestCase):
         )
 
         self.client.force_authenticate(member)
+        before_count = Membership.objects.count()
         for method, url, data in (
             ("get", self.list_url, None),
             ("post", self.list_url, {"email": "regular@example.com"}),
@@ -236,12 +250,19 @@ class MembershipManagementAPITests(TestCase):
         ):
             response = getattr(self.client, method)(url, data, format="json") if data else getattr(self.client, method)(url)
             self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        membership.refresh_from_db()
+        self.assertEqual(membership.role, Membership.Role.MEMBER)
+        self.assertEqual(Membership.objects.count(), before_count)
 
         self.client.force_authenticate(self.admin)
+        before_count = Membership.objects.count()
         response = self.client.get(
             reverse("membership-detail", args=[other_membership.id])
         )
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(Membership.objects.count(), before_count)
+        other_membership.refresh_from_db()
+        self.assertEqual(other_membership.role, Membership.Role.ADMIN)
 
     def test_unauthenticated_membership_requests_are_rejected(self):
         self.client.force_authenticate(None)
