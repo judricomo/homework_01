@@ -106,15 +106,30 @@ Constraints:
 
 ## 6. Add chore assignment modes and assignments
 Status: Groomed in [#6](https://github.com/judricomo/homework_01/issues/6)
-Goal: Support rotation, manual, and claim-based chore assignment.
-Description: Extend chores with an assignment mode and create the assignment records needed to track responsibility. Implement manual assignment and claim behavior first, including the rules that prevent conflicting claims.
+Goal: Extend each chore with one assignment mode and provide household-scoped assignment records for manual responsibility and claim-pool responsibility.
+Description: Add the assignment-mode and assignment data needed by later APIs and rotation scheduling. Implement validated manual assignment and transaction-safe claim behavior in the domain layer, while keeping scheduling and HTTP endpoint work in their dedicated issues.
 Acceptance criteria:
-- [ ] Each chore uses exactly one of rotation, manual, or claim modes.
-- [ ] Manual assignments identify one eligible household member.
-- [ ] Claim-mode chores remain claimable until one eligible member claims them.
-- [ ] Concurrent or duplicate claims allow at most one active claimant.
-- [ ] Cross-household claims and mode-incompatible operations return clear errors.
-- [ ] Focused tests cover all modes, validation, permissions, and claim races.
+- [ ] Every chore stores exactly one assignment mode: `manual`, `rotation`, or `claim`; missing, unknown, or multiple values cannot be persisted.
+- [ ] A manual assignment references exactly one active member of the chore’s household, and an assignment for another household, a non-member, or an inactive member is rejected without saving.
+- [ ] A claim-mode chore with no active claim has an explicitly unclaimed state; a valid household member can claim it once, and the successful claim identifies that member.
+- [ ] A claim cannot be created for a chore in `manual` or `rotation` mode, and a manual assignment cannot be created for a chore in `claim` or `rotation` mode; each rejected operation returns a clear validation error and has no side effects.
+- [ ] At most one active assignment exists for a chore occurrence: repeated claims by the same member and claims by different members are rejected after the first successful claim, including when requests race concurrently.
+- [ ] Assignment and claim writes are transaction-safe and enforce uniqueness at the database level where supported, so retrying a failed claim cannot replace or duplicate the winning assignment.
+- [ ] Changing a chore’s mode is validated: it cannot leave active assignments contradictory to the new mode, and a failed transition leaves the mode and assignments unchanged.
+- [ ] Rotation-mode chores retain the household/member and ordering data required by [#7](https://github.com/judricomo/homework_01/issues/7), without advancing the rotation or creating scheduler side effects in this task.
+- [ ] Focused model/service tests cover each mode, missing and invalid modes, active/inactive and cross-household members, duplicate and concurrent claims, mode transitions, database constraints, and side-effect-free failures.
+Out of scope:
+- Rotation ordering, advancement, skipped/removed-member behavior, and scheduling execution: [#7](https://github.com/judricomo/homework_01/issues/7)
+- Fixed/flexible recurrence, occurrence generation, and due-date calculation: [#8](https://github.com/judricomo/homework_01/issues/8)
+- Chore and assignment HTTP endpoints, request authentication, administrator/member API permissions, and claim responses: [#9](https://github.com/judricomo/homework_01/issues/9)
+- Completion submission, approval, and clearing or recreating assignments after an approved occurrence: [#10](https://github.com/judricomo/homework_01/issues/10)
+- Chore CRUD, difficulty validation, and point derivation: [#5](https://github.com/judricomo/homework_01/issues/5)
+Constraints:
+- Use the Household and Membership boundary from [#2](https://github.com/judricomo/homework_01/issues/2); every assignment query and write must be household-scoped.
+- Keep implementation in the chores domain models/services and migrations, with focused tests; do not add HTTP routes or serializers here.
+- Use database constraints and transactions for active-assignment uniqueness and claim races; do not rely on an application-only pre-check.
+- Preserve assignment history needed by later completion and leaderboard work; do not silently overwrite the winning claimant.
+- Keep rotation scheduling policy and recurrence policy out of this task; expose only the data and invariants their follow-up issues require.
 
 ## 7. Implement rotation scheduling
 Status: Groomed in [#7](https://github.com/judricomo/homework_01/issues/7)
