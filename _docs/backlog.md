@@ -222,15 +222,34 @@ Constraints:
 ## 10. Implement completion submission and verification
 Status: Groomed in [#10](https://github.com/judricomo/homework_01/issues/10)
 Goal: Require approval before a chore earns credit.
-Description: Create Completion records and endpoints for members to report chores as done. Add pending, approved, and rejected states, require another household member to review a completion, and prevent self-approval.
+Description: Let an active, eligible household member submit one self-reported completion for a stable chore occurrence, then let a different household member approve or reject it. Preserve immutable review history, enforce household and assignment boundaries, and make approval the only state consumable by gamification follow-ups.
 Acceptance criteria:
-- [ ] An eligible member can submit one pending completion for a chore occurrence.
-- [ ] Completion records identify member, chore, occurrence, submission time, and state.
-- [ ] Another household member can approve or reject; the submitter cannot review their own completion.
-- [ ] Duplicate active submissions are rejected.
-- [ ] Approved/rejected terminal states cannot be changed by repeated review requests.
-- [ ] Pending and rejected completions trigger no gamification effects.
-- [ ] Focused tests cover submission, review, state transitions, duplicates, and permissions.
+- [ ] An authenticated, active household member can submit exactly one completion for a valid occurrence to which they are eligible; it starts as `pending`.
+- [ ] A completion records submitting membership, chore, stable occurrence identifier, submitted-at timestamp, review state, and immutable reviewer/reviewed-at data when finalized.
+- [ ] Missing, unknown, already-finalized, inactive, cross-household, and ineligible occurrences are rejected without side effects.
+- [ ] Repeating a submission for the same member, chore, and occurrence is rejected (or returns the existing pending record under one documented idempotency response); no second active completion is created.
+- [ ] A different active member of the same household can approve or reject a pending completion; self-review, unauthenticated review, and unauthorized review are denied.
+- [ ] Server-side transitions are limited to `pending -> approved` and `pending -> rejected`, are transaction-safe, and are protected against concurrent/replayed review.
+- [ ] Approved and rejected states are terminal; repeated or contradictory review requests are side-effect-free and return documented errors.
+- [ ] Approval does not implement points, streaks, badges, or leaderboards, but exposes the state/linkage contracts required by [#11](https://github.com/judricomo/homework_01/issues/11), [#12](https://github.com/judricomo/homework_01/issues/12), and [#13](https://github.com/judricomo/homework_01/issues/13); pending/rejected records are ignored by those consumers.
+- [ ] An approved occurrence cannot be completed again; assignment clearing/recreation, if required, is explicit and never overwrites completion history.
+- [ ] Rejected occurrences remain historical; any retry policy is documented and uses a new completion rather than mutating the rejected record.
+- [ ] Focused tests cover valid submission, eligibility and household isolation, inactive members, duplicate submission, pending retrieval, approval, rejection, self-review denial, permissions, concurrency/replay, terminal states, assignment lifecycle, and absent gamification side effects.
+Out of scope:
+- Point ledger creation and award idempotency: [#11](https://github.com/judricomo/homework_01/issues/11).
+- Streak calculations: [#12](https://github.com/judricomo/homework_01/issues/12).
+- Badge definitions and awards: [#13](https://github.com/judricomo/homework_01/issues/13).
+- Leaderboard aggregation: [#14](https://github.com/judricomo/homework_01/issues/14).
+- Chore/assignment CRUD and member work-queue APIs beyond minimum completion/review routes: [#9](https://github.com/judricomo/homework_01/issues/9).
+- Dedicated due/overdue surfaces: [#15](https://github.com/judricomo/homework_01/issues/15).
+- Frontend screens, external notifications, photo verification, custom badges, per-chore streaks, self-service signup, and multi-tenancy.
+Constraints:
+- Use the household and active-membership boundary from [#2](https://github.com/judricomo/homework_01/issues/2); scope every completion read and write through the authenticated member's household.
+- Consume chore, assignment, occurrence, recurrence, and eligibility contracts from [#5](https://github.com/judricomo/homework_01/issues/5)–[#9](https://github.com/judricomo/homework_01/issues/9); do not duplicate recurrence, claim, or rotation rules.
+- Use explicit states, database uniqueness where supported, and transactions/locking for submission and review races.
+- Preserve immutable review history and never silently overwrite completions, occurrences, assignments, or claims.
+- Do not accept or store photos or other proof artifacts; v1 is self-reported.
+- Document routes, fields, status codes, transition errors, retry/idempotency behavior, and rejected-occurrence policy in [#16](https://github.com/judricomo/homework_01/issues/16).
 
 ## 11. Build the points ledger and scoring updates
 Status: Groomed in [#11](https://github.com/judricomo/homework_01/issues/11)
