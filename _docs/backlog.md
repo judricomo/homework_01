@@ -164,16 +164,16 @@ Status: Groomed in [#8](https://github.com/judricomo/homework_01/issues/8)
 Goal: Calculate the next due local date for a chore from its configured recurrence rule and anchor date. The result must be deterministic, timezone-aware, and based on approved completion history only where the flexible rule requires it.
 Description: Support fixed/calendar recurrence (daily, weekly, every N days, or selected weekdays) and flexible recurrence (N days after the most recent approved completion). Use the project timezone and explicit local-date semantics so engineers and API consumers get the same answer at date boundaries and daylight-saving transitions.
 Acceptance criteria:
-- [ ] A chore represents exactly one recurrence mode: fixed/calendar or flexible; fixed rules represent daily, weekly, every-N-days, or selected weekdays, and flexible rules store a positive whole-day interval.
-- [ ] Every chore has an explicit local-date anchor; when there is no prior approved completion, the first due date is the anchor date for both fixed and flexible rules.
-- [ ] Daily recurrence advances one local calendar day, weekly recurrence advances seven local calendar days, and every-N-days recurrence advances exactly N local calendar days from the prior due occurrence.
-- [ ] Selected-weekday recurrence stores at least one valid weekday, returns the next selected weekday after the prior due date, and wraps across the end of the week.
-- [ ] Flexible recurrence returns the anchor date when there is no approved completion and otherwise returns the most recent approved completion's local date plus the configured interval.
-- [ ] Pending and rejected completions, completions from another chore or household, and completions lacking approval do not affect a flexible next due date.
-- [ ] Missing, zero, negative, fractional, non-integer, or contradictory recurrence values are rejected before persistence; selected weekdays reject invalid values and an empty set.
-- [ ] A recurrence calculation is deterministic for the same rule, anchor, completion history, and project timezone, including at local midnight and across daylight-saving transitions.
-- [ ] Due-date calculations use local calendar dates rather than elapsed 24-hour durations; the documented project timezone is applied consistently when converting completion timestamps.
-- [ ] Focused tests cover every recurrence mode, first due date, weekday wraparound, approved versus pending/rejected history, invalid values, date boundaries, and daylight-saving transitions.
+- [x] A chore represents exactly one recurrence mode: fixed/calendar or flexible; fixed rules represent daily, weekly, every-N-days, or selected weekdays, and flexible rules store a positive whole-day interval.
+- [x] Every chore has an explicit local-date anchor; when there is no prior approved completion, the first due date is the anchor date for both fixed and flexible rules.
+- [x] Daily recurrence advances one local calendar day, weekly recurrence advances seven local calendar days, and every-N-days recurrence advances exactly N local calendar days from the prior due occurrence.
+- [x] Selected-weekday recurrence stores at least one valid weekday, returns the next selected weekday after the prior due date, and wraps across the end of the week.
+- [x] Flexible recurrence returns the anchor date when there is no approved completion and otherwise returns the most recent approved completion's local date plus the configured interval.
+- [x] Pending and rejected completions, completions from another chore or household, and completions lacking approval do not affect a flexible next due date.
+- [x] Missing, zero, negative, fractional, non-integer, or contradictory recurrence values are rejected before persistence; selected weekdays reject invalid values and an empty set.
+- [x] A recurrence calculation is deterministic for the same rule, anchor, completion history, and project timezone, including at local midnight and across daylight-saving transitions.
+- [x] Due-date calculations use local calendar dates rather than elapsed 24-hour durations; the documented project timezone is applied consistently when converting completion timestamps.
+- [x] Focused tests cover every recurrence mode, first due date, weekday wraparound, approved versus pending/rejected history, invalid values, date boundaries, and daylight-saving transitions.
 
 Out of scope:
 - Rotation assignment advancement: [#7](https://github.com/judricomo/homework_01/issues/7).

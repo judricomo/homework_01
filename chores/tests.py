@@ -1,6 +1,8 @@
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime
+from types import SimpleNamespace
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
@@ -9,6 +11,7 @@ from django.test import SimpleTestCase
 from django.test import TestCase, TransactionTestCase
 from django.urls import path, reverse
 from django.test import override_settings
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.authtoken.models import Token
 from rest_framework.authtoken.views import obtain_auth_token
@@ -17,6 +20,7 @@ from rest_framework.test import APIClient
 from rest_framework.views import APIView
 
 from .models import Chore, ChoreAssignment, Household, Membership, RotationMember
+from .services import calculate_next_due_date
 
 
 class ProjectLoadsTest(SimpleTestCase):
@@ -24,6 +28,74 @@ class ProjectLoadsTest(SimpleTestCase):
         response = self.client.get(reverse("admin:login"))
 
         self.assertEqual(response.status_code, 200)
+
+
+class ChoreRecurrenceTests(TestCase):
+    def setUp(self):
+        self.household = Household.objects.create(name="Recurrence household")
+        self.chore = Chore.objects.create(
+            household=self.household,
+            name="Clean kitchen",
+            difficulty=Chore.Difficulty.EASY,
+            assignment_mode=Chore.AssignmentMode.MANUAL,
+            anchor_date=date(2026, 3, 1),
+        )
+
+    def completion(self, **kwargs):
+        values = dict(
+            chore_id=self.chore.pk,
+            household_id=self.household.pk,
+            status="approved",
+            completed_at=timezone.make_aware(datetime(2026, 3, 8, 23, 30)),
+        )
+        values.update(kwargs)
+        return SimpleNamespace(**values)
+
+    def test_fixed_rules_and_first_due_date(self):
+        self.assertEqual(self.chore.next_due_date(), date(2026, 3, 1))
+        self.chore.fixed_recurrence = Chore.FixedRecurrence.WEEKLY
+        self.assertEqual(self.chore.next_due_date(date(2026, 3, 1)), date(2026, 3, 8))
+        self.chore.fixed_recurrence = Chore.FixedRecurrence.EVERY_N_DAYS
+        self.chore.recurrence_interval_days = 3
+        self.assertEqual(self.chore.next_due_date(date(2026, 3, 1)), date(2026, 3, 4))
+
+    def test_selected_weekdays_wrap_and_skip_to_next(self):
+        self.chore.fixed_recurrence = Chore.FixedRecurrence.SELECTED_WEEKDAYS
+        self.chore.selected_weekdays = [0]
+        self.chore.full_clean()
+        self.assertEqual(self.chore.next_due_date(date(2026, 3, 6)), date(2026, 3, 9))
+
+    def test_flexible_uses_latest_approved_completion_only(self):
+        self.chore.recurrence_mode = Chore.RecurrenceMode.FLEXIBLE
+        self.chore.recurrence_interval_days = 2
+        self.chore.save()
+        pending = self.completion(status="pending", completed_at=datetime(2026, 3, 20))
+        rejected = self.completion(status="rejected", completed_at=datetime(2026, 3, 19))
+        other = self.completion(chore_id=999, completed_at=datetime(2026, 3, 18))
+        self.assertEqual(
+            calculate_next_due_date(self.chore, completions=[pending, rejected, other, self.completion()]),
+            date(2026, 3, 10),
+        )
+
+    def test_flexible_converts_aware_completion_in_project_timezone(self):
+        self.chore.recurrence_mode = Chore.RecurrenceMode.FLEXIBLE
+        self.chore.recurrence_interval_days = 1
+        self.chore.save()
+        completion = self.completion(
+            completed_at=datetime.fromisoformat("2026-03-09T06:30:00+00:00")
+        )
+        with self.settings(TIME_ZONE="America/Los_Angeles"):
+            self.assertEqual(self.chore.next_due_date(completions=[completion]), date(2026, 3, 9))
+
+    def test_invalid_recurrence_values_are_rejected(self):
+        self.chore.recurrence_interval_days = 0
+        with self.assertRaises(ValidationError):
+            self.chore.full_clean()
+        self.chore.recurrence_interval_days = 1
+        self.chore.fixed_recurrence = Chore.FixedRecurrence.SELECTED_WEEKDAYS
+        self.chore.selected_weekdays = []
+        with self.assertRaises(ValidationError):
+            self.chore.full_clean()
 
 
 class HouseholdMembershipTests(TestCase):
