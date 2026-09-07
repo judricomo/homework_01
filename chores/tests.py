@@ -19,7 +19,15 @@ from rest_framework.response import Response
 from rest_framework.test import APIClient
 from rest_framework.views import APIView
 
-from .models import Chore, ChoreAssignment, Completion, Household, Membership, RotationMember
+from .models import (
+    Chore,
+    ChoreAssignment,
+    Completion,
+    Household,
+    Membership,
+    PointsLedger,
+    RotationMember,
+)
 from .services import calculate_next_due_date
 
 
@@ -1301,3 +1309,98 @@ class TokenAuthenticationTests(TestCase):
             settings.REST_FRAMEWORK["DEFAULT_PERMISSION_CLASSES"],
             ["rest_framework.permissions.IsAuthenticated"],
         )
+
+
+
+class PointsLedgerTests(TestCase):
+    def setUp(self):
+        self.user_model = get_user_model()
+        self.household = Household.objects.create(name="Points household")
+        self.member = Membership.objects.create(
+            household=self.household,
+            user=self.user_model.objects.create_user(username="scorer"),
+            role=Membership.Role.MEMBER,
+        )
+        self.chore = Chore.objects.create(
+            household=self.household,
+            name="Vacuum",
+            difficulty=Chore.Difficulty.EASY,
+            assignment_mode=Chore.AssignmentMode.MANUAL,
+        )
+        self.assignment = ChoreAssignment.create_manual(self.chore, self.member, occurrence=uuid.uuid4())
+        self.completion = Completion.objects.create(
+            household=self.household,
+            chore=self.chore,
+            assignment=self.assignment,
+            submitted_by=self.member,
+            occurrence=self.assignment.occurrence,
+            status=Completion.Status.APPROVED,
+            reviewer=self.member,
+            reviewed_at=timezone.now(),
+        )
+
+    def test_approved_completion_creates_single_snapshot_and_totals(self):
+        entry = PointsLedger.award_for_completion(self.completion)
+
+        self.assertEqual(entry.points, 1)
+        self.assertEqual(entry.member_id, self.member.id)
+        self.assertEqual(entry.completion_id, self.completion.id)
+        self.assertTrue(entry.awarded_at.tzinfo is not None)
+        self.assertEqual(PointsLedger.total_for_member(self.member), 1)
+        self.assertEqual(self.member.total_points, 1)
+
+        self.chore.difficulty = Chore.Difficulty.HARD
+        self.chore.save()
+        self.assertEqual(entry.points, 1)
+        self.assertEqual(PointsLedger.objects.get(pk=entry.pk).points, 1)
+
+    def test_pending_rejected_missing_and_cross_household_are_refused(self):
+        pending = Completion.objects.create(
+            household=self.household,
+            chore=self.chore,
+            assignment=self.assignment,
+            submitted_by=self.member,
+            occurrence=uuid.uuid4(),
+            status=Completion.Status.PENDING,
+        )
+        with self.assertRaises(ValidationError):
+            PointsLedger.award_for_completion(pending)
+
+        rejected = Completion.objects.create(
+            household=self.household,
+            chore=self.chore,
+            assignment=self.assignment,
+            submitted_by=self.member,
+            occurrence=uuid.uuid4(),
+            status=Completion.Status.REJECTED,
+            reviewer=self.member,
+            reviewed_at=timezone.now(),
+        )
+        with self.assertRaises(ValidationError):
+            PointsLedger.award_for_completion(rejected)
+
+        with self.assertRaises(Completion.DoesNotExist):
+            PointsLedger.award_for_completion(999999)
+
+    def test_duplicate_retries_are_idempotent(self):
+        first = PointsLedger.award_for_completion(self.completion)
+        second = PointsLedger.award_for_completion(self.completion)
+        self.assertEqual(first.pk, second.pk)
+        self.assertEqual(PointsLedger.objects.filter(completion=self.completion).count(), 1)
+
+    def test_append_only_and_zero_totals_are_preserved(self):
+        entry = PointsLedger.award_for_completion(self.completion)
+
+        with self.assertRaises(ValidationError):
+            entry.points = 99
+            entry.save()
+        with self.assertRaises(ValidationError):
+            entry.delete()
+
+        other_member = Membership.objects.create(
+            household=self.household,
+            user=self.user_model.objects.create_user(username="no-points"),
+            role=Membership.Role.MEMBER,
+        )
+        self.assertEqual(PointsLedger.total_for_member(other_member), 0)
+        self.assertEqual(PointsLedger.total_for_household(self.household)[self.member.id], 1)

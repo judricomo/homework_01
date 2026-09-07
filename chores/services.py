@@ -1,4 +1,4 @@
-from .models import ChoreAssignment, Completion
+from .models import ChoreAssignment, Completion, PointsLedger
 
 
 def schedule_rotation(chore, occurrence):
@@ -21,3 +21,16 @@ def review_completion(*, completion_id, reviewer, status):
     return Completion.review(
         completion_id=completion_id, reviewer=reviewer, status=status
     )
+
+
+
+def award_points_for_completion(completion):
+    return PointsLedger.award_for_completion(completion)
+
+
+def award_completion_points(completion):
+    return PointsLedger.award_for_completion(completion)
+
+
+def score_for_member(member):
+    return PointsLedger.total_for_member(member)

@@ -1,7 +1,7 @@
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
-from django.db import IntegrityError, OperationalError, connection, models, transaction
-from django.db.models import F
+from django.db import IntegrityError, OperationalError, close_old_connections, connection, models, transaction
+from django.db.models import F, Sum
 from django.conf import settings
 from django.utils import timezone
 from datetime import date, timedelta
@@ -65,6 +65,10 @@ class Membership(models.Model):
 
     def __str__(self):
         return f"{self.user} - {self.household} ({self.role})"
+
+    @property
+    def total_points(self):
+        return PointsLedger.total_for_member(self)
 
 
 class Chore(models.Model):
@@ -622,3 +626,155 @@ class Completion(models.Model):
                 completion.assignment.is_active = False
                 completion.assignment.save(update_fields=["is_active"])
             return completion
+
+
+
+class PointsLedger(models.Model):
+    SQLITE_LOCK_RETRIES = 5
+    SQLITE_LOCK_RETRY_DELAY = 0.02
+
+    household = models.ForeignKey(
+        Household, on_delete=models.PROTECT, related_name="points_ledger_entries"
+    )
+    member = models.ForeignKey(
+        Membership, on_delete=models.PROTECT, related_name="points_ledger_entries"
+    )
+    chore = models.ForeignKey(
+        Chore, on_delete=models.PROTECT, related_name="points_ledger_entries"
+    )
+    completion = models.OneToOneField(
+        Completion, on_delete=models.PROTECT, related_name="points_ledger_entry"
+    )
+    points = models.PositiveSmallIntegerField()
+    awarded_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-awarded_at", "-pk"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["completion"],
+                name="unique_points_ledger_completion",
+            )
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.completion_id is not None:
+            if self.household_id != self.completion.household_id:
+                raise ValidationError({"household": "Award household must match the completion."})
+            if self.member_id is not None and self.member.household_id != self.household_id:
+                raise ValidationError({"member": "Member must belong to the awarding household."})
+            if self.member_id is not None and self.member_id != self.completion.submitted_by_id:
+                raise ValidationError({"member": "Member must match the completion submitter."})
+            if self.chore_id is not None and self.chore.household_id != self.household_id:
+                raise ValidationError({"chore": "Chore must belong to the awarding household."})
+            if self.chore_id is not None and self.chore_id != self.completion.chore_id:
+                raise ValidationError({"chore": "Chore must match the completion chore."})
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            current = type(self).objects.filter(pk=self.pk).values(
+                "household_id",
+                "member_id",
+                "chore_id",
+                "completion_id",
+                "points",
+                "awarded_at",
+            ).first()
+            if current:
+                for field_name, expected in (
+                    ("household_id", self.household_id),
+                    ("member_id", self.member_id),
+                    ("chore_id", self.chore_id),
+                    ("completion_id", self.completion_id),
+                    ("points", self.points),
+                    ("awarded_at", self.awarded_at),
+                ):
+                    if current.get(field_name) != expected:
+                        raise ValidationError("Points ledger entries are immutable.")
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Points ledger entries cannot be deleted.")
+
+    @staticmethod
+    def _coerce_completion(value):
+        if value is None:
+            raise ValidationError("A completion is required.")
+        if isinstance(value, Completion):
+            return value
+        return Completion.objects.select_related("household", "chore", "submitted_by").get(pk=value)
+
+    @classmethod
+    def award_for_completion(cls, completion):
+        completion = cls._coerce_completion(completion)
+        for attempt in range(cls.SQLITE_LOCK_RETRIES + 1):
+            try:
+                with transaction.atomic():
+                    completion_row = Completion.objects.select_related(
+                        "household",
+                        "chore",
+                        "submitted_by",
+                    ).get(pk=completion.pk)
+                    if completion_row.status != Completion.Status.APPROVED:
+                        raise ValidationError("Only approved completions can be awarded points.")
+
+                    existing = cls.objects.filter(completion_id=completion_row.pk).first()
+                    if existing is not None:
+                        return existing
+
+                    chore_row = Chore.objects.get(pk=completion_row.chore_id)
+                    if completion_row.household_id != chore_row.household_id:
+                        raise ValidationError("Completion household must match the chore household.")
+                    if completion_row.submitted_by.household_id != completion_row.household_id:
+                        raise ValidationError("Submitter must belong to the completion household.")
+
+                    try:
+                        return cls.objects.create(
+                            household=completion_row.household,
+                            member=completion_row.submitted_by,
+                            chore=chore_row,
+                            completion=completion_row,
+                            points=int(chore_row.points),
+                            awarded_at=timezone.now(),
+                        )
+                    except IntegrityError:
+                        existing = cls.objects.filter(completion_id=completion_row.pk).first()
+                        if existing is not None:
+                            return existing
+                        raise
+            except IntegrityError:
+                close_old_connections()
+                if attempt == cls.SQLITE_LOCK_RETRIES:
+                    raise ValidationError(
+                        "This completion could not be awarded due to concurrent activity."
+                    )
+                time.sleep(cls.SQLITE_LOCK_RETRY_DELAY * (attempt + 1))
+            except OperationalError as exc:
+                close_old_connections()
+                if "locked" not in str(exc).lower() or attempt == cls.SQLITE_LOCK_RETRIES:
+                    raise ValidationError(
+                        "This completion could not be awarded due to concurrent activity."
+                    ) from exc
+                time.sleep(cls.SQLITE_LOCK_RETRY_DELAY * (attempt + 1))
+
+    award_completion = award_for_completion
+    process_completion = award_for_completion
+    create_for_completion = award_for_completion
+
+    @classmethod
+    def total_for_member(cls, member):
+        return (
+            cls.objects.filter(member=member).aggregate(total=Sum("points"))["total"] or 0
+        )
+
+    score_for_member = total_for_member
+
+    @classmethod
+    def total_for_household(cls, household):
+        rows = cls.objects.filter(household=household).values_list("member_id", "points")
+        totals = {}
+        for member_id, points in rows:
+            totals[member_id] = totals.get(member_id, 0) + points
+        return totals
