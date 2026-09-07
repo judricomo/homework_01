@@ -407,15 +407,21 @@ Constraints:
 
 ## 16. Document API behavior and v1 scope
 Status: Groomed in [#16](https://github.com/judricomo/homework_01/issues/16)
-Goal: Make the implemented API understandable to contributors and frontend developers.
-Description: Document authentication, endpoints, request and response shapes, roles, state transitions, recurrence rules, scoring values, badge thresholds, and leaderboard period rules. Record explicit v1 exclusions so later work does not silently expand scope.
+Goal: Publish a source-of-truth contract for the implemented v1 API so frontend developers and contributors can use it without inferring undocumented behavior.
+Description: Document authentication, every implemented endpoint, request/response/error shapes, role permissions, household isolation, state transitions, recurrence and due/overdue rules, scoring, streaks, badges, leaderboards, timezone boundaries, and explicit v1 exclusions. Verify examples and unresolved decisions against the running implementation rather than inventing behavior.
 Acceptance criteria:
-- [ ] Authentication, endpoints, fields, permissions, and error responses are documented.
-- [ ] Household scoping and administrator/member permissions are documented.
-- [ ] Difficulty points, assignments, recurrence, due states, and completion transitions are documented.
-- [ ] Approval effects, badge thresholds, leaderboard periods, and timezone behavior are documented.
-- [ ] Examples include authenticated success and validation-error responses.
-- [ ] Documentation matches implemented behavior and identifies unresolved decisions.
-- [ ] v1 exclusions link to relevant follow-up issues where applicable.
+- [ ] Authentication, methods, fields, permissions, status codes, validation errors, and error shapes are documented for every implemented route.
+- [ ] Household scoping, active-membership behavior, administrator/member permissions, and cross-household/non-disclosing identifier behavior are documented.
+- [ ] Difficulty points, assignment modes and visibility, recurrence variants, occurrence advancement, due/overdue boundaries, and project timezone/DST behavior are documented.
+- [ ] Completion submit/approve/reject transitions and duplicate/finalized/invalid-transition edge cases are documented, including immutable rejected history and terminal rejection.
+- [ ] Approval is documented as the only source of points, streak, badge, and recurrence effects; pending/rejected effects are explicitly stated.
+- [ ] Points ledger behavior, fixed badge identifiers/thresholds, idempotency/history, leaderboard period boundaries, ties/ranks, zero-activity members, and rollover preservation are documented.
+- [ ] Due/overdue response shape, empty results, assignment/claim visibility, exact boundary behavior, and read-only/no-external-notification behavior are documented.
+- [ ] Examples include an authenticated success response and verified authentication, authorization, validation, not-found, and conflict/state-transition errors.
+- [ ] Documentation is checked against the implementation and tests; unresolved product decisions and any implementation/plan mismatch are identified rather than silently resolved.
+- [ ] v1 exclusions link to relevant follow-ups: frontend consumer [#18](https://github.com/judricomo/homework_01/issues/18), custom periods [#19](https://github.com/judricomo/homework_01/issues/19), self-service signup/invites [#20](https://github.com/judricomo/homework_01/issues/20), and custom badges [#21](https://github.com/judricomo/homework_01/issues/21).
 Follow-up:
-- Frontend dashboard and leaderboard documentation consumer: [#18](https://github.com/judricomo/homework_01/issues/18)
+- API documentation is the contract consumed by the frontend dashboard: [#18](https://github.com/judricomo/homework_01/issues/18)
+- Custom leaderboard periods/date ranges remain deferred: [#19](https://github.com/judricomo/homework_01/issues/19)
+- Self-service signup and invitation flows remain deferred: [#20](https://github.com/judricomo/homework_01/issues/20)
+- Administrator-defined custom badges remain deferred: [#21](https://github.com/judricomo/homework_01/issues/21)
