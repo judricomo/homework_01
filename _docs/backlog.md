@@ -281,16 +281,34 @@ Constraints:
 
 ## 12. Implement streak tracking
 Status: Groomed in [#12](https://github.com/judricomo/homework_01/issues/12)
-Goal: Track each member's consecutive days with approved activity.
-Description: Calculate per-person daily streaks from approved completions only. Update streak state when a completion is approved and define behavior for same-day activity, missed days, and timezone boundaries.
+Goal: Track one household member's daily approved-completion activity as a durable current streak and historical best streak.
+Description: Derive per-person daily streaks from approved completions only. Use the completion's submitted timestamp converted to the configured project timezone as the activity date, preserve activity-day evidence, and make recalculation safe for duplicate, concurrent, and out-of-order approval effects.
 Acceptance criteria:
-- [ ] An approved completion counts as activity for one local calendar day.
-- [ ] Multiple approvals on one day do not inflate the streak.
-- [ ] Consecutive activity days extend the current streak.
-- [ ] A missed day resets the current streak and preserves the best streak.
-- [ ] Pending and rejected completions never affect streaks.
-- [ ] Reprocessing approval is idempotent.
-- [ ] Focused tests cover same-day, consecutive-day, missed-day, replay, and timezone cases.
+- [ ] Each member has one streak state with current length, best length, and most recent activity date; no approved activity means current and best are zero with no date.
+- [ ] An approved completion contributes one activity date from `submitted_at` in the configured project timezone; approval time does not select the date.
+- [ ] Multiple approved completions on one local date count once, while consecutive dates extend the current run.
+- [ ] A gap resets current streak to the run ending on the latest activity date and preserves the historical best.
+- [ ] Older or out-of-order approvals produce the same state as chronological processing and do not discard activity history.
+- [ ] Pending, rejected, invalid, missing, or cross-household completions have no streak side effects.
+- [ ] Replayed, retried, or concurrent approval effects are idempotent and cannot inflate or corrupt member-day or streak state.
+- [ ] Timezone-aware conversion handles local-midnight and daylight-saving boundaries using the project timezone.
+- [ ] Every read and write is household/member scoped; cross-household IDs cannot access or mutate streaks.
+- [ ] Streak state and activity-day evidence update atomically, with safe retry after failure.
+- [ ] Focused tests cover no activity, first/same-day/consecutive activity, one- and multi-day gaps, best preservation, out-of-order approval, invalid states, replay/concurrency, isolation, and timezone/DST boundaries.
+Out of scope:
+- Completion submission, review transitions, approval-effect orchestration, and the immutable completion contract: [#10](https://github.com/judricomo/homework_01/issues/10)
+- Point awards and the points ledger: [#11](https://github.com/judricomo/homework_01/issues/11)
+- Per-chore or on-time streaks; expanded streak taxonomy: [#19](https://github.com/judricomo/homework_01/issues/19)
+- Fixed milestone badge definitions and awards: [#13](https://github.com/judricomo/homework_01/issues/13)
+- All-time/current-period leaderboard calculations: [#14](https://github.com/judricomo/homework_01/issues/14)
+- API and gamification documentation: [#16](https://github.com/judricomo/homework_01/issues/16)
+- Frontend streak displays and notifications: [#18](https://github.com/judricomo/homework_01/issues/18)
+Constraints:
+- Keep changes in the chores domain, migrations, focused tests, and required approval-effect integration.
+- Use dedicated streak state plus database-enforced member/activity-date uniqueness (or an equivalent durable design); do not infer streaks from mutable points.
+- Consume the approved-completion contract from [#10](https://github.com/judricomo/homework_01/issues/10) and configured project timezone; do not duplicate recurrence, assignment, or review rules.
+- Use timezone-aware Django datetimes, transactions, and appropriate locking/constraint handling for safe retries and concurrency.
+- Preserve household scoping and historical activity evidence; document deletion behavior rather than silently rewriting history.
 
 ## 13. Define and award milestone badges
 Status: Groomed in [#13](https://github.com/judricomo/homework_01/issues/13)
