@@ -1,4 +1,4 @@
-from .models import ChoreAssignment, Completion, MemberStreak, PointsLedger
+from .models import BadgeAward, ChoreAssignment, Completion, MemberStreak, PointsLedger
 
 
 def schedule_rotation(chore, occurrence):
@@ -46,3 +46,7 @@ def streak_for_member(member):
         membership__household=member.household,
         membership__is_active=True,
     ).first()
+
+
+def evaluate_badges_for_completion(completion):
+    return BadgeAward.evaluate_for_completion(completion)

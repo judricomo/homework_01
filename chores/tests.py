@@ -20,6 +20,8 @@ from rest_framework.test import APIClient
 from rest_framework.views import APIView
 
 from .models import (
+    BadgeAward,
+    BadgeCatalog,
     Chore,
     ChoreAssignment,
     Completion,
@@ -1170,6 +1172,73 @@ class CompletionReviewRaceTests(TransactionTestCase):
             ).count(),
             1,
         )
+
+
+class BadgeAwardTests(TestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.household = Household.objects.create(name="Badge household")
+        self.member = Membership.objects.create(
+            household=self.household,
+            user=user_model.objects.create_user(username="badge-member"),
+            role=Membership.Role.MEMBER,
+        )
+        self.reviewer = Membership.objects.create(
+            household=self.household,
+            user=user_model.objects.create_user(username="badge-reviewer"),
+            role=Membership.Role.MEMBER,
+        )
+        self.chore = Chore.objects.create(
+            household=self.household, name="Badge chore",
+            difficulty=Chore.Difficulty.HARD,
+            assignment_mode=Chore.AssignmentMode.MANUAL,
+        )
+
+    def make_completion(self, occurrence=None, status=Completion.Status.APPROVED):
+        assignment = ChoreAssignment.create_manual(self.chore, self.member)
+        completion = Completion.submit(
+            membership=self.member, chore=self.chore, occurrence=assignment.occurrence
+        )
+        if status != Completion.Status.PENDING:
+            Completion.objects.filter(pk=completion.pk).update(
+                status=status, reviewer=self.reviewer, reviewed_at=timezone.now()
+            )
+            completion.refresh_from_db()
+        return completion
+
+    def test_catalog_is_exactly_three_fixed_badges(self):
+        self.assertEqual(
+            [badge["identifier"] for badge in BadgeCatalog.ALL],
+            ["seven_day_streak", "hundred_points", "fifty_completions"],
+        )
+        for badge in BadgeCatalog.ALL:
+            self.assertIsInstance(badge["threshold"], int)
+            self.assertTrue({"display_name", "description", "metric"} <= badge.keys())
+
+    def test_threshold_award_is_durable_and_idempotent(self):
+        completion = self.make_completion()
+        PointsLedger.award_for_completion(completion)
+        streak = MemberStreak.objects.get(membership=self.member)
+        streak.current_streak = 7
+        streak.save(update_fields=["current_streak", "updated_at"])
+        awards = BadgeAward.evaluate_for_completion(completion)
+        self.assertEqual(len(awards), 1)
+        self.assertEqual(awards[0].badge_identifier, "seven_day_streak")
+        self.assertEqual(
+            len(BadgeAward.evaluate_for_completion(completion)), 1
+        )
+        awards[0].refresh_from_db()
+        awarded_at = awards[0].awarded_at
+        self.assertEqual(awards[0].awarded_at, awarded_at)
+
+    def test_pending_and_rejected_completions_do_not_earn_badges(self):
+        pending = self.make_completion(status=Completion.Status.PENDING)
+        with self.assertRaises(ValidationError):
+            BadgeAward.evaluate_for_completion(pending)
+        rejected = self.make_completion(status=Completion.Status.REJECTED)
+        with self.assertRaises(ValidationError):
+            BadgeAward.evaluate_for_completion(rejected)
+        self.assertFalse(BadgeAward.objects.exists())
 
 
 class ProtectedResourceView(APIView):

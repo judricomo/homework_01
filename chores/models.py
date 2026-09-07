@@ -17,6 +17,34 @@ CHORE_DIFFICULTY_POINTS = {
 }
 
 
+class BadgeCatalog:
+    """The immutable, centrally-defined v1 milestone catalog."""
+
+    SEVEN_DAY_STREAK = {
+        "identifier": "seven_day_streak",
+        "display_name": "7-day streak",
+        "description": "Complete at least one chore on seven consecutive local calendar days.",
+        "metric": "current_streak",
+        "threshold": 7,
+    }
+    HUNDRED_POINTS = {
+        "identifier": "hundred_points",
+        "display_name": "100 points",
+        "description": "Earn at least 100 points from approved chore completions.",
+        "metric": "approved_points",
+        "threshold": 100,
+    }
+    FIFTY_COMPLETIONS = {
+        "identifier": "fifty_completions",
+        "display_name": "50 chores",
+        "description": "Have at least 50 approved chore completions.",
+        "metric": "approved_completions",
+        "threshold": 50,
+    }
+    ALL = (SEVEN_DAY_STREAK, HUNDRED_POINTS, FIFTY_COMPLETIONS)
+    BY_IDENTIFIER = {badge["identifier"]: badge for badge in ALL}
+
+
 class Household(models.Model):
     name = models.CharField(max_length=255)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -607,28 +635,37 @@ class Completion(models.Model):
     def review(cls, *, completion_id, reviewer, status):
         if status not in (cls.Status.APPROVED, cls.Status.REJECTED):
             raise ValidationError("Review status must be approved or rejected.")
-        with transaction.atomic():
-            completion = cls.objects.select_for_update().select_related(
-                "chore", "assignment", "submitted_by"
-            ).get(pk=completion_id)
-            if not reviewer.is_active or reviewer.household_id != completion.household_id:
-                raise ValidationError("Reviewer must be an active household member.")
-            if reviewer.id == completion.submitted_by_id:
-                raise ValidationError("You cannot review your own completion.")
-            if completion.status != cls.Status.PENDING:
-                raise ValidationError("This completion has already been reviewed.")
-            reviewed_at = timezone.now()
-            updated = cls.objects.filter(
-                pk=completion.pk, status=cls.Status.PENDING
-            ).update(status=status, reviewer=reviewer, reviewed_at=reviewed_at)
-            if not updated:
-                raise ValidationError("This completion has already been reviewed.")
-            completion.refresh_from_db()
-            if status == cls.Status.APPROVED:
-                completion.assignment.is_active = False
-                completion.assignment.save(update_fields=["is_active"])
-                MemberStreak.record_approved_completion(completion)
-            return completion
+        for attempt in range(PointsLedger.SQLITE_LOCK_RETRIES + 1):
+            try:
+                with transaction.atomic():
+                    completion = cls.objects.select_for_update().select_related(
+                        "chore", "assignment", "submitted_by"
+                    ).get(pk=completion_id)
+                    if not reviewer.is_active or reviewer.household_id != completion.household_id:
+                        raise ValidationError("Reviewer must be an active household member.")
+                    if reviewer.id == completion.submitted_by_id:
+                        raise ValidationError("You cannot review your own completion.")
+                    if completion.status != cls.Status.PENDING:
+                        raise ValidationError("This completion has already been reviewed.")
+                    reviewed_at = timezone.now()
+                    updated = cls.objects.filter(
+                        pk=completion.pk, status=cls.Status.PENDING
+                    ).update(status=status, reviewer=reviewer, reviewed_at=reviewed_at)
+                    if not updated:
+                        raise ValidationError("This completion has already been reviewed.")
+                    completion.refresh_from_db()
+                    if status == cls.Status.APPROVED:
+                        completion.assignment.is_active = False
+                        completion.assignment.save(update_fields=["is_active"])
+                        PointsLedger.award_for_completion(completion)
+                        MemberStreak.record_approved_completion(completion)
+                        BadgeAward.evaluate_for_completion(completion)
+                    return completion
+            except OperationalError as exc:
+                if "locked" not in str(exc).lower() or attempt == PointsLedger.SQLITE_LOCK_RETRIES:
+                    raise
+                close_old_connections()
+                time.sleep(PointsLedger.SQLITE_LOCK_RETRY_DELAY * (attempt + 1))
 
 
 class MemberStreak(models.Model):
@@ -913,3 +950,100 @@ class PointsLedger(models.Model):
         for member_id, points in rows:
             totals[member_id] = totals.get(member_id, 0) + points
         return totals
+
+
+class BadgeAward(models.Model):
+    """Durable evidence that a fixed badge was earned by a household member."""
+
+    household = models.ForeignKey(
+        Household, on_delete=models.PROTECT, related_name="badge_awards"
+    )
+    member = models.ForeignKey(
+        Membership, on_delete=models.PROTECT, related_name="badge_awards"
+    )
+    badge_identifier = models.CharField(max_length=40)
+    awarded_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ["-awarded_at", "-pk"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["member", "badge_identifier"],
+                name="unique_member_badge_award",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.badge_identifier not in BadgeCatalog.BY_IDENTIFIER:
+            raise ValidationError({"badge_identifier": "Select a fixed v1 badge."})
+        if self.member_id and self.member.household_id != self.household_id:
+            raise ValidationError({"member": "Member must belong to the awarding household."})
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            current = type(self).objects.filter(pk=self.pk).values(
+                "household_id", "member_id", "badge_identifier", "awarded_at"
+            ).first()
+            if current and any(
+                current[field] != getattr(self, field)
+                for field in ("household_id", "member_id", "badge_identifier", "awarded_at")
+            ):
+                raise ValidationError("Badge awards are immutable.")
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Badge awards cannot be deleted.")
+
+    @classmethod
+    def evaluate_for_completion(cls, completion):
+        """Award every newly-qualified fixed badge for one approved completion."""
+        if not isinstance(completion, Completion):
+            completion = Completion.objects.select_related(
+                "household", "chore", "submitted_by"
+            ).get(pk=completion)
+        if completion.status != Completion.Status.APPROVED:
+            raise ValidationError("Only approved completions can earn badges.")
+        if completion.household_id != completion.chore.household_id:
+            raise ValidationError("Completion household must match the chore household.")
+        member = Membership.objects.get(
+            pk=completion.submitted_by_id,
+            household_id=completion.household_id,
+            is_active=True,
+        )
+        metrics = {
+            "current_streak": MemberStreak.objects.get(membership=member).current_streak,
+            "approved_points": PointsLedger.total_for_member(member),
+            "approved_completions": Completion.objects.filter(
+                household_id=member.household_id,
+                submitted_by=member,
+                status=Completion.Status.APPROVED,
+            ).count(),
+        }
+        awards = []
+        for badge in BadgeCatalog.ALL:
+            if metrics[badge["metric"]] < badge["threshold"]:
+                continue
+            existing = cls.objects.filter(
+                member=member, badge_identifier=badge["identifier"]
+            ).first()
+            if existing is not None:
+                awards.append(existing)
+                continue
+            try:
+                award = cls.objects.create(
+                    household=member.household,
+                    member=member,
+                    badge_identifier=badge["identifier"],
+                    awarded_at=timezone.now(),
+                )
+            except (IntegrityError, ValidationError):
+                award = cls.objects.get(
+                    member=member, badge_identifier=badge["identifier"]
+                )
+            awards.append(award)
+        return awards
+
+    award_for_completion = evaluate_for_completion
+    evaluate = evaluate_for_completion

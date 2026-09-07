@@ -317,21 +317,21 @@ Implementation:
 - Streak and activity history cascade with membership/household deletion to preserve existing deletion semantics.
 
 ## 13. Define and award milestone badges
-Status: Groomed in [#13](https://github.com/judricomo/homework_01/issues/13)
+Status: Implemented in [#13](https://github.com/judricomo/homework_01/issues/13)
 Goal: Define the fixed v1 badge catalog and automatically award each milestone badge to a household member when approved activity causes the qualifying metric to reach or exceed its threshold. Awards must be durable, household-scoped, and safe to repeat.
 Description: Implement the three fixed v1 milestones—7 consecutive approved-activity days, 100 approved points, and 50 approved chore completions—using the durable points and streak contracts. Evaluate badges only after successful approval effects and preserve immutable award evidence.
 Acceptance criteria:
-- [ ] The fixed catalog contains exactly these v1 milestones: a 7-consecutive-day approved-activity streak, 100 approved points, and 50 approved chore completions.
-- [ ] Each catalog entry has a stable, immutable identifier, display name, description, metric, integer threshold, and documented threshold semantics.
-- [ ] A 7-day streak badge is awarded only when the member's durable streak reaches 7 consecutive activity days; a gap resets the current streak and does not qualify until 7 new consecutive days are reached.
-- [ ] A 100-point badge is awarded only when the member's approved point total reaches at least 100; pending or rejected completions contribute zero points.
-- [ ] A 50-chores badge is awarded only when the member's count of approved chore completions reaches at least 50; each approved completion is counted once.
-- [ ] Badge evaluation runs after the approval transaction has successfully updated the relevant points, streak, or approved-completion metric, and an approval that is pending, rejected, or otherwise unsuccessful creates no award.
-- [ ] Values below each threshold produce no award, the exact threshold produces one award, and values above the threshold also produce one award.
-- [ ] Re-running evaluation for the same approval, replaying an already-processed approval, or concurrently evaluating the same member/badge never creates duplicate awards.
-- [ ] An award stores the member, fixed badge identifier, and award timestamp, remains queryable after later metric changes, and is not revoked when a completion is later edited or deleted under the project's history rules.
-- [ ] Badge evaluation is restricted to the completion's household/member scope and cannot award a badge to another household's member.
-- [ ] Focused tests cover every catalog entry, below/exactly/above thresholds, streak gaps, pending and rejected completions, duplicate/replayed evaluation, concurrent-safe uniqueness, and durable award records.
+- [x] The fixed catalog contains exactly these v1 milestones: a 7-consecutive-day approved-activity streak, 100 approved points, and 50 approved chore completions.
+- [x] Each catalog entry has a stable, immutable identifier, display name, description, metric, integer threshold, and documented threshold semantics.
+- [x] A 7-day streak badge is awarded only when the member's durable streak reaches 7 consecutive activity days; a gap resets the current streak and does not qualify until 7 new consecutive days are reached.
+- [x] A 100-point badge is awarded only when the member's approved point total reaches at least 100; pending or rejected completions contribute zero points.
+- [x] A 50-chores badge is awarded only when the member's count of approved chore completions reaches at least 50; each approved completion is counted once.
+- [x] Badge evaluation runs after the approval transaction has successfully updated the relevant points, streak, or approved-completion metric, and an approval that is pending, rejected, or otherwise unsuccessful creates no award.
+- [x] Values below each threshold produce no award, the exact threshold produces one award, and values above the threshold also produce one award.
+- [x] Re-running evaluation for the same approval, replaying an already-processed approval, or concurrently evaluating the same member/badge never creates duplicate awards.
+- [x] An award stores the member, fixed badge identifier, and award timestamp, remains queryable after later metric changes, and is not revoked when a completion is later edited or deleted under the project's history rules.
+- [x] Badge evaluation is restricted to the completion's household/member scope and cannot award a badge to another household's member.
+- [x] Focused tests cover every catalog entry, below/exactly/above thresholds, streak gaps, pending and rejected completions, duplicate/replayed evaluation, concurrent-safe uniqueness, and durable award records.
 Out of scope:
 - Admin-defined, user-defined, or otherwise configurable badge definitions; tracked in [#21](https://github.com/judricomo/homework_01/issues/21).
 - Points calculation and the immutable points ledger; consume the approved-award contract from [#11](https://github.com/judricomo/homework_01/issues/11).
