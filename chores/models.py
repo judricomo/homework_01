@@ -87,6 +87,7 @@ class Chore(models.Model):
         max_length=8, choices=AssignmentMode.choices
     )
     points = models.PositiveSmallIntegerField(default=0, editable=False)
+    rotation_position = models.PositiveIntegerField(default=1)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -286,5 +287,89 @@ class ChoreAssignment(models.Model):
                 if "locked" not in str(exc).lower() or attempt == cls.SQLITE_LOCK_RETRIES:
                     raise ValidationError(
                         "This chore occurrence could not be claimed due to concurrent activity."
+                    ) from exc
+                time.sleep(cls.SQLITE_LOCK_RETRY_DELAY * (attempt + 1))
+
+    @classmethod
+    def schedule_rotation(cls, chore, occurrence):
+        """Assign one due occurrence to the next eligible rotation member."""
+        if chore.assignment_mode != Chore.AssignmentMode.ROTATION:
+            raise ValidationError(
+                "Rotation scheduling is only valid for rotation-mode chores."
+            )
+        if occurrence is None:
+            raise ValidationError("A due occurrence is required.")
+
+        for attempt in range(cls.SQLITE_LOCK_RETRIES + 1):
+            try:
+                with transaction.atomic():
+                    chore_row = Chore.objects.select_for_update().get(
+                        pk=chore.pk,
+                        household_id=chore.household_id,
+                        assignment_mode=Chore.AssignmentMode.ROTATION,
+                    )
+                    if connection.vendor == "sqlite":
+                        Chore.objects.filter(pk=chore_row.pk).update(name=F("name"))
+
+                    existing = cls.objects.filter(
+                        chore=chore_row, occurrence=occurrence, is_active=True
+                    ).first()
+                    if existing:
+                        return existing
+
+                    members = list(
+                        RotationMember.objects.filter(
+                            chore=chore_row,
+                            is_active=True,
+                            membership__household_id=chore_row.household_id,
+                        ).order_by("position", "pk")
+                    )
+                    if not members:
+                        return None
+
+                    start = next(
+                        (
+                            index
+                            for index, member in enumerate(members)
+                            if member.position >= chore_row.rotation_position
+                        ),
+                        0,
+                    )
+                    selected = next(
+                        (
+                            (index, members[index])
+                            for offset in range(len(members))
+                            for index in [(start + offset) % len(members)]
+                            if members[index].membership.is_active
+                        ),
+                        None,
+                    )
+                    if selected is None:
+                        return None
+
+                    index, rotation_member = selected
+                    assignment = cls.objects.create(
+                        chore=chore_row,
+                        membership=rotation_member.membership,
+                        occurrence=occurrence,
+                        assignment_type=cls.AssignmentType.ROTATION,
+                    )
+                    next_member = members[(index + 1) % len(members)]
+                    chore_row.rotation_position = next_member.position
+                    chore_row.save(update_fields=["rotation_position", "updated_at"])
+                    return assignment
+            except IntegrityError:
+                existing = cls.objects.filter(
+                    chore=chore, occurrence=occurrence, is_active=True
+                ).first()
+                if existing:
+                    return existing
+                raise ValidationError(
+                    "This chore occurrence could not be scheduled concurrently."
+                )
+            except OperationalError as exc:
+                if "locked" not in str(exc).lower() or attempt == cls.SQLITE_LOCK_RETRIES:
+                    raise ValidationError(
+                        "This chore occurrence could not be scheduled due to concurrent activity."
                     ) from exc
                 time.sleep(cls.SQLITE_LOCK_RETRY_DELAY * (attempt + 1))

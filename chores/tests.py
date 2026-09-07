@@ -537,6 +537,112 @@ class ChoreAssignmentTests(TransactionTestCase):
                 chore=chore, membership=self.outsider, position=2
             )
 
+    def add_rotation_member(self, chore, username, position):
+        user = get_user_model().objects.create_user(username=username)
+        membership = Membership.objects.create(
+            household=self.household, user=user, role=Membership.Role.MEMBER
+        )
+        RotationMember.objects.create(
+            chore=chore, membership=membership, position=position
+        )
+        return membership
+
+    def test_rotation_scheduling_cycles_and_wraps(self):
+        chore = self.chore(Chore.AssignmentMode.ROTATION)
+        first = self.add_rotation_member(chore, "first", 1)
+        second = self.add_rotation_member(chore, "second", 2)
+
+        assignments = [
+            ChoreAssignment.schedule_rotation(chore, uuid.uuid4())
+            for _ in range(3)
+        ]
+
+        self.assertEqual(
+            [assignment.membership_id for assignment in assignments],
+            [first.id, second.id, first.id],
+        )
+        chore.refresh_from_db()
+        self.assertEqual(chore.rotation_position, 2)
+
+    def test_rotation_scheduling_is_idempotent_and_one_member_is_stable(self):
+        chore = self.chore(Chore.AssignmentMode.ROTATION)
+        member = self.add_rotation_member(chore, "only", 4)
+        occurrence = uuid.uuid4()
+
+        first = ChoreAssignment.schedule_rotation(chore, occurrence)
+        second = ChoreAssignment.schedule_rotation(chore, occurrence)
+
+        self.assertEqual(first.pk, second.pk)
+        self.assertEqual(ChoreAssignment.objects.filter(chore=chore).count(), 1)
+        self.assertEqual(first.membership_id, member.id)
+        chore.refresh_from_db()
+        self.assertEqual(chore.rotation_position, 4)
+
+    def test_rotation_skips_inactive_members_and_preserves_cursor_when_empty(self):
+        chore = self.chore(Chore.AssignmentMode.ROTATION)
+        inactive = self.add_rotation_member(chore, "inactive", 1)
+        active = self.add_rotation_member(chore, "active", 2)
+        inactive.is_active = False
+        inactive.save()
+
+        assignment = ChoreAssignment.schedule_rotation(chore, uuid.uuid4())
+        self.assertEqual(assignment.membership_id, active.id)
+        chore.refresh_from_db()
+        self.assertEqual(chore.rotation_position, 1)
+
+        active.is_active = False
+        active.save()
+        before = chore.rotation_position
+        self.assertIsNone(ChoreAssignment.schedule_rotation(chore, uuid.uuid4()))
+        chore.refresh_from_db()
+        self.assertEqual(chore.rotation_position, before)
+
+        active.is_active = True
+        active.save()
+        retry = ChoreAssignment.schedule_rotation(chore, uuid.uuid4())
+        self.assertEqual(retry.membership_id, active.id)
+
+    def test_rotation_sequence_changes_use_current_order(self):
+        chore = self.chore(Chore.AssignmentMode.ROTATION)
+        first = self.add_rotation_member(chore, "sequence-first", 10)
+        second = self.add_rotation_member(chore, "sequence-second", 20)
+        chore.rotation_position = 20
+        chore.save()
+
+        RotationMember.objects.filter(membership=first).update(position=30)
+        assignment = ChoreAssignment.schedule_rotation(chore, uuid.uuid4())
+
+        self.assertEqual(assignment.membership_id, second.id)
+
+    def test_concurrent_rotation_scheduling_shares_one_assignment(self):
+        chore = self.chore(Chore.AssignmentMode.ROTATION)
+        first = self.add_rotation_member(chore, "concurrent-first", 1)
+        self.add_rotation_member(chore, "concurrent-second", 2)
+        occurrence = uuid.uuid4()
+        barrier = threading.Barrier(2)
+
+        def schedule():
+            close_old_connections()
+            barrier.wait()
+            try:
+                return ChoreAssignment.schedule_rotation(chore, occurrence)
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            assignments = list(executor.map(lambda _: schedule(), (1, 2)))
+
+        self.assertEqual(assignments[0].pk, assignments[1].pk)
+        self.assertEqual(assignments[0].membership_id, first.id)
+        self.assertEqual(
+            ChoreAssignment.objects.filter(
+                chore=chore, occurrence=occurrence, is_active=True
+            ).count(),
+            1,
+        )
+        chore.refresh_from_db()
+        self.assertEqual(chore.rotation_position, 2)
+
 
 class ProtectedResourceView(APIView):
     def get(self, request):

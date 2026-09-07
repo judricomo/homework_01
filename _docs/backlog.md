@@ -136,16 +136,16 @@ Status: Groomed in [#7](https://github.com/judricomo/homework_01/issues/7)
 Goal: Automatically assign rotation chores to household members in sequence.
 Description: Add the scheduling data and domain service for assigning each due rotation-chore occurrence to the next eligible household member. Preserve a deterministic order and cursor so retries, membership changes, and empty eligibility do not produce duplicate or surprising assignments.
 Acceptance criteria:
-- [ ] A rotation chore stores an explicit ordered sequence of household members and the rotation state needed to identify the next position; the sequence rejects members from another household and preserves a stable order when read back.
-- [ ] Scheduling accepts one identified due occurrence and selects the first active, eligible member at or after the stored position, wrapping to the beginning when necessary; the same inputs always select the same member.
-- [ ] A successful scheduling call creates exactly one active assignment for that occurrence and advances the rotation position exactly once, to the position after the assigned member.
-- [ ] Repeating scheduling for the same chore occurrence is idempotent: it returns or reuses the existing active assignment, does not create another assignment, and does not advance the position again.
-- [ ] Members who are removed, inactive, or otherwise ineligible when an occurrence is scheduled are skipped without being assigned; the next eligible member receives the assignment and becomes the new rotation position.
-- [ ] A one-member rotation assigns that member for each otherwise-eligible occurrence and leaves the position stable after each successful assignment.
-- [ ] If no sequence member is eligible, scheduling creates no assignment, reports the no-eligible-member outcome, and leaves the rotation position unchanged so a later retry can succeed after membership changes.
-- [ ] Scheduling does not advance rotation or award any completion-related credit for pending or rejected completions; only the documented assignment/rotation event can advance the position.
-- [ ] Concurrent or retried scheduling cannot create duplicate active assignments for one occurrence or skip an additional member; assignment uniqueness and the position update are transaction-safe.
-- [ ] Focused tests cover normal cycling and wraparound, one-member rotations, removed/inactive members, sequence changes, repeated and concurrent scheduling, no eligible members, and pending/rejected completion behavior.
+- [x] A rotation chore stores an explicit ordered sequence of household members and the rotation state needed to identify the next position; the sequence rejects members from another household and preserves a stable order when read back.
+- [x] Scheduling accepts one identified due occurrence and selects the first active, eligible member at or after the stored position, wrapping to the beginning when necessary; the same inputs always select the same member.
+- [x] A successful scheduling call creates exactly one active assignment for that occurrence and advances the rotation position exactly once, to the position after the assigned member.
+- [x] Repeating scheduling for the same chore occurrence is idempotent: it returns or reuses the existing active assignment, does not create another assignment, and does not advance the position again.
+- [x] Members who are removed, inactive, or otherwise ineligible when an occurrence is scheduled are skipped without being assigned; the next eligible member receives the assignment and becomes the new rotation position.
+- [x] A one-member rotation assigns that member for each otherwise-eligible occurrence and leaves the position stable after each successful assignment.
+- [x] If no sequence member is eligible, scheduling creates no assignment, reports a no-eligible-member outcome, and leaves the rotation position unchanged so a later retry can succeed after membership changes.
+- [x] Scheduling does not advance rotation or award any completion-related credit for pending or rejected completions; only the documented assignment/rotation event can advance the position.
+- [x] Concurrent or retried scheduling cannot create duplicate active assignments for one occurrence or skip an additional member; assignment uniqueness and the position update are transaction-safe.
+- [x] Focused tests cover normal cycling and wraparound, one-member rotations, removed/inactive members, sequence changes, repeated and concurrent scheduling, no eligible members, and pending/rejected completion behavior.
 Out of scope:
 - Full recurrence-rule storage, due-date calculation, timezone policy, and occurrence generation: [#8](https://github.com/judricomo/homework_01/issues/8)
 - Household and membership model invariants: [#2](https://github.com/judricomo/homework_01/issues/2)
