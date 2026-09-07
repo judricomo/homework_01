@@ -3,6 +3,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
@@ -2045,4 +2046,85 @@ class PointsLedgerConcurrencyTests(TransactionTestCase):
 
         self.assertEqual(
             PointsLedger.objects.filter(completion=self.completion).count(), 0
+        )
+
+
+class LeaderboardAPITests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        user_model = get_user_model()
+        self.household = Household.objects.create(name="Leaderboard household")
+        self.member_user = user_model.objects.create_user(username="member")
+        self.tie_user = user_model.objects.create_user(username="tie")
+        self.zero_user = user_model.objects.create_user(username="zero")
+        self.member = Membership.objects.create(
+            household=self.household, user=self.member_user, role=Membership.Role.MEMBER
+        )
+        self.tie = Membership.objects.create(
+            household=self.household, user=self.tie_user, role=Membership.Role.MEMBER
+        )
+        self.zero = Membership.objects.create(
+            household=self.household, user=self.zero_user, role=Membership.Role.MEMBER
+        )
+
+    def award(self, member, awarded_at, difficulty=Chore.Difficulty.EASY):
+        chore = Chore.objects.create(
+            household=self.household, name=uuid.uuid4().hex,
+            difficulty=difficulty, assignment_mode=Chore.AssignmentMode.MANUAL,
+        )
+        assignment = ChoreAssignment.create_manual(chore, member, occurrence=uuid.uuid4())
+        completion = Completion.objects.create(
+            household=self.household, chore=chore, assignment=assignment,
+            submitted_by=member, occurrence=assignment.occurrence,
+            status=Completion.Status.APPROVED, reviewer=member, reviewed_at=awarded_at,
+        )
+        return PointsLedger.objects.create(
+            household=self.household, member=member, chore=chore,
+            completion=completion, points=chore.points, awarded_at=awarded_at,
+        )
+
+    def test_all_time_is_scoped_ranked_and_preserves_zero_members(self):
+        now = timezone.now()
+        self.award(self.member, now, Chore.Difficulty.HARD)
+        self.award(self.tie, now, Chore.Difficulty.HARD)
+        self.client.force_authenticate(self.member_user)
+
+        response = self.client.get(reverse("leaderboard"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["view"], "all_time")
+        self.assertEqual(
+            [(row["member_id"], row["total_points"], row["rank"]) for row in response.data["members"]],
+            [(self.member.id, 5, 1), (self.tie.id, 5, 1), (self.zero.id, 0, 3)],
+        )
+
+    @override_settings(TIME_ZONE="America/Los_Angeles")
+    def test_current_period_uses_half_open_project_timezone_boundary(self):
+        reference = timezone.make_aware(datetime(2026, 3, 11, 18, 0), timezone.get_current_timezone())
+        local_start = timezone.make_aware(datetime(2026, 3, 9, 0, 0), timezone.get_current_timezone())
+        self.award(self.member, local_start)
+        self.award(self.member, local_start + timedelta(days=7))
+        self.client.force_authenticate(self.member_user)
+
+        with patch("chores.views.timezone.now", return_value=reference):
+            response = self.client.get(reverse("leaderboard-current-period"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["period_type"], "calendar_week")
+        self.assertEqual(response.data["members"][0]["total_points"], 1)
+        self.assertEqual(response.data["period_start"], "2026-03-09T00:00:00-07:00")
+        self.assertEqual(response.data["period_end"], "2026-03-16T00:00:00-07:00")
+
+    def test_inactive_and_unauthenticated_members_cannot_read(self):
+        self.member.is_active = False
+        self.member.save(update_fields=["is_active"])
+        self.client.force_authenticate(self.member_user)
+        self.assertEqual(
+            self.client.get(reverse("leaderboard")).status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+        self.client.force_authenticate(None)
+        self.assertEqual(
+            self.client.get(reverse("leaderboard-current-period")).status_code,
+            status.HTTP_401_UNAUTHORIZED,
         )

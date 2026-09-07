@@ -62,3 +62,22 @@ Rejected occurrences are terminal for the submitting member in v1: the same
 member cannot resubmit that occurrence, and there is no retry endpoint.
 Pending or rejected completions have no points, streak, badge, or leaderboard
 side effects.
+
+## Leaderboard API contract
+
+Active household members can read the all-time leaderboard at
+`/api/household/leaderboard/` (also available at
+`/api/household/leaderboard/all-time/`) and the current calendar-week
+leaderboard at `/api/household/leaderboard/current-period/`. Responses contain
+`view`, project `timezone`, and `members`; each member has `member_id`,
+`username`, `total_points`, and a deterministic competition `rank` (ties share
+a rank and the next rank skips accordingly). Only active members of the
+requester's household are included, with zero totals preserved. Scores come
+only from the immutable points ledger.
+
+The current-period response additionally contains `period_type` (always
+`calendar_week`), `period_start` (inclusive), `period_end` (exclusive), and
+the server `reference_time`. The period is Monday 00:00 through the following
+Monday 00:00 in the configured project timezone. Requests are authenticated
+and read-only; unauthenticated requests receive HTTP 401 and inactive members
+receive HTTP 403.

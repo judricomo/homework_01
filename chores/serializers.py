@@ -6,6 +6,23 @@ from .models import Membership
 from .models import Chore, ChoreAssignment, Completion
 
 
+class LeaderboardMemberSerializer(serializers.Serializer):
+    member_id = serializers.IntegerField()
+    username = serializers.CharField()
+    total_points = serializers.IntegerField()
+    rank = serializers.IntegerField()
+
+
+class LeaderboardSerializer(serializers.Serializer):
+    view = serializers.ChoiceField(choices=("all_time", "current_period"))
+    timezone = serializers.CharField()
+    members = LeaderboardMemberSerializer(many=True)
+    period_type = serializers.CharField(required=False)
+    period_start = serializers.DateTimeField(required=False)
+    period_end = serializers.DateTimeField(required=False)
+    reference_time = serializers.DateTimeField(required=False)
+
+
 class MembershipSerializer(serializers.ModelSerializer):
     user = serializers.SerializerMethodField()
     household = serializers.SerializerMethodField()

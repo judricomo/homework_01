@@ -7,8 +7,12 @@ from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils import timezone
+from django.conf import settings
+from django.db.models import Q, Sum
+from django.db.models.functions import Coalesce
+from datetime import datetime, time, timedelta
 
-from .models import Chore, ChoreAssignment, Completion, Membership
+from .models import Chore, ChoreAssignment, Completion, Membership, PointsLedger
 from .permissions import IsActiveHouseholdMember, IsHouseholdAdministrator
 from .serializers import (
     AddMembershipSerializer,
@@ -17,6 +21,7 @@ from .serializers import (
     ChoreSerializer,
     ChoreWorkSerializer,
     CompletionSerializer, CompletionSubmissionSerializer, CompletionReviewSerializer,
+    LeaderboardSerializer,
 )
 
 FILTER_VALUES = {
@@ -265,3 +270,78 @@ class CompletionViewSet(viewsets.ReadOnlyModelViewSet):
         except DjangoValidationError as exc:
             raise ValidationError({"detail": exc.messages}) from exc
         return Response(CompletionSerializer(completion).data)
+
+
+class LeaderboardView(generics.GenericAPIView):
+    permission_classes = (IsActiveHouseholdMember,)
+    serializer_class = LeaderboardSerializer
+
+    def get_membership(self):
+        return Membership.objects.select_related("household").get(
+            user=self.request.user, is_active=True
+        )
+
+    def get(self, request, *args, **kwargs):
+        membership = self.get_membership()
+        reference_time = timezone.now()
+        period_start = period_end = None
+        view_name = self.kwargs.get("period", "all_time")
+        if view_name == "current_period":
+            local_reference = timezone.localtime(reference_time)
+            start_date = local_reference.date() - timedelta(days=local_reference.weekday())
+            period_start = timezone.make_aware(
+                datetime.combine(start_date, time.min),
+                timezone.get_current_timezone(),
+            )
+            period_end = timezone.make_aware(
+                datetime.combine(start_date + timedelta(days=7), time.min),
+                timezone.get_current_timezone(),
+            )
+
+        award_filter = (
+            Q(
+                points_ledger_entries__awarded_at__gte=period_start,
+                points_ledger_entries__awarded_at__lt=period_end,
+            )
+            if period_start is not None
+            else Q()
+        )
+        members = list(
+            Membership.objects.filter(
+                household_id=membership.household_id, is_active=True
+            ).select_related("user").annotate(
+                score_total=Coalesce(
+                    Sum(
+                        "points_ledger_entries__points",
+                        filter=award_filter,
+                    ),
+                    0,
+                )
+            ).order_by("-score_total", "id")
+        )
+        rows = []
+        previous_total = None
+        rank = 0
+        for index, member in enumerate(members, start=1):
+            if member.score_total != previous_total:
+                rank = index
+                previous_total = member.score_total
+            rows.append({
+                "member_id": member.id,
+                "username": member.user.username,
+                "total_points": member.score_total,
+                "rank": rank,
+            })
+        payload = {
+            "view": view_name,
+            "timezone": settings.TIME_ZONE,
+            "members": rows,
+        }
+        if period_start is not None:
+            payload.update({
+                "period_type": "calendar_week",
+                "period_start": period_start,
+                "period_end": period_end,
+                "reference_time": reference_time,
+            })
+        return Response(self.get_serializer(payload).data)

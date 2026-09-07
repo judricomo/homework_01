@@ -351,14 +351,14 @@ Status: Groomed in [#14](https://github.com/judricomo/homework_01/issues/14)
 Goal: Expose household-scoped rankings that let members compare approved points earned all time and during the current calendar week.
 Description: Build read-only leaderboard endpoints for all-time totals and the current calendar week. Include every active household member, including members with zero qualifying points, and return each member's total and deterministic rank. The current period is Monday 00:00:00 through the following Monday 00:00:00 in Django's configured project timezone, represented as a half-open interval; the response exposes the period type, timezone, start, and exclusive end. Preserve the immutable points ledger across period boundaries.
 Acceptance criteria:
-- [ ] An authenticated household member can retrieve a read-only all-time leaderboard; each active household member appears once with the sum of that member's approved points, and a member with no approved points has total `0`.
-- [ ] An authenticated household member can retrieve a read-only current-period leaderboard; it uses the current calendar week in the project timezone, with an inclusive start at Monday 00:00:00 and an exclusive end at the next Monday 00:00:00.
-- [ ] The current-period total includes ledger awards whose timezone-aware award timestamp is within `[period_start, period_end)`; an award exactly at the start is included and one exactly at the exclusive end is excluded.
+- [x] An authenticated household member can retrieve a read-only all-time leaderboard; each active household member appears once with the sum of that member's approved points, and a member with no approved points has total `0`.
+- [x] An authenticated household member can retrieve a read-only current-period leaderboard; it uses the current calendar week in the project timezone, with an inclusive start at Monday 00:00:00 and an exclusive end at the next Monday 00:00:00.
+- [x] The current-period total includes ledger awards whose timezone-aware award timestamp is within `[period_start, period_end)`; an award exactly at the start is included and one exactly at the exclusive end is excluded.
 - [ ] Both views read only the immutable points ledger and exclude pending or rejected completions and any award outside the requesting member's household.
-- [ ] Both views include only active memberships at query time; deactivated members and members from another household cannot appear or be used to access results.
-- [ ] Each response identifies the view (`all_time` or `current_period`), project timezone, and for the current-period view the period type, inclusive start, exclusive end, and server-evaluated reference time.
-- [ ] Ranking is deterministic: rows sort by total points descending, then stable member identifier ascending; ranks use competition ranking (`1, 1, 3`) and repeated identical requests return the same order and ranks.
-- [ ] A period rollover changes only current-period totals and metadata; it does not delete, reset, mutate, or re-date all-time ledger entries.
+- [x] Both views include only active memberships at query time; deactivated members and members from another household cannot appear or be used to access results.
+- [x] Each response identifies the view (`all_time` or `current_period`), project timezone, and for the current-period view the period type, inclusive start, exclusive end, and server-evaluated reference time.
+- [x] Ranking is deterministic: rows sort by total points descending, then stable member identifier ascending; ranks use competition ranking (`1, 1, 3`) and repeated identical requests return the same order and ranks.
+- [x] A period rollover changes only current-period totals and metadata; it does not delete, reset, mutate, or re-date all-time ledger entries.
 - [ ] Unauthorized requests are rejected, and authenticated requests cannot obtain or infer another household's members or totals by changing an identifier or filter.
 - [ ] Focused tests cover authentication, approved totals, zero-point members, pending/rejected exclusion, exact period boundaries, timezone/DST behavior, rollover/history preservation, ties and rank numbering, inactive members, and household isolation.
 Out of scope:

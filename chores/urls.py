@@ -7,6 +7,7 @@ from .views import (
     CompletionViewSet,
     MembershipDetailView,
     MembershipListCreateView,
+    LeaderboardView,
 )
 
 router = DefaultRouter()
@@ -17,6 +18,14 @@ router.register("completions", CompletionViewSet, basename="completion")
 urlpatterns = [
     path("", include(router.urls)),
     path("members/", MembershipListCreateView.as_view(), name="membership-list"),
+    path("leaderboard/", LeaderboardView.as_view(), name="leaderboard"),
+    path("leaderboard/all-time/", LeaderboardView.as_view(), name="leaderboard-all-time"),
+    path(
+        "leaderboard/current-period/",
+        LeaderboardView.as_view(),
+        {"period": "current_period"},
+        name="leaderboard-current-period",
+    ),
     path(
         "members/<int:pk>/",
         MembershipDetailView.as_view(),
