@@ -189,15 +189,35 @@ Constraints:
 
 ## 9. Implement chore listing and assignment APIs
 Status: Groomed in [#9](https://github.com/judricomo/homework_01/issues/9)
-Goal: Give household members a secure API for viewing their available chores.
-Description: Expose endpoints for administrators to manage chores and for members to view chores assigned to them or available in the claim pool. Include due, overdue, assignment, recurrence, difficulty, and point information.
+Goal: Give household members a secure, household-scoped API for managing and viewing chore occurrences.
+Description: Expose Django REST Framework endpoints for administrator chore CRUD and member work queues. Members may see only their assigned chores or currently claimable claim-pool occurrences; responses include assignment, recurrence, difficulty, derived points, and local due-state context. Claiming must remain transaction-safe and all visibility must be explicitly scoped to the member's household.
 Acceptance criteria:
-- [ ] Administrators can manage chores in their household.
-- [ ] Members see only relevant assigned or claim-pool chores in their household.
-- [ ] Responses include difficulty, points, assignment, recurrence, and due state.
-- [ ] Claim-pool results exclude unavailable or completed occurrences.
-- [ ] Non-members cannot read or modify household chores.
-- [ ] Focused API tests cover CRUD, filtering, visibility, due state, and permissions.
+- [ ] Authenticated administrators can create, retrieve, update, list, and delete only chores in their household; requests enforce the Chore model's name, difficulty, derived-point, assignment-mode, and recurrence validation.
+- [ ] Authenticated regular members can list and retrieve only current occurrences assigned to them or currently available in their household's claim pool; unrelated manual, rotation, and claimed occurrences are excluded.
+- [ ] Responses expose a stable documented shape containing chore identity/name, difficulty, derived points, assignment mode, current assignee or claimability, recurrence summary, occurrence/due local date, and a documented due state.
+- [ ] Claim-pool results contain only currently available occurrences and exclude already claimed, submitted, approved, or otherwise completed occurrences; concurrent claims cannot assign one occurrence to two members.
+- [ ] Assignment and recurrence filters accept only documented values, reject malformed or contradictory combinations with field-level client errors, and do not broaden member visibility.
+- [ ] Unknown identifiers, inactive/unavailable claim-pool items, non-member access, and member attempts at administrator-only operations return documented errors without revealing another household's object.
+- [ ] List endpoints implement deterministic ordering, pagination or another explicit bounded-result rule, and a documented empty response shape.
+- [ ] Due-state calculations use the recurrence service's project-timezone local-date semantics, including date-boundary and daylight-saving cases; unapproved or rejected activity does not advance recurrence or mark an occurrence completed.
+- [ ] Focused API tests cover administrator CRUD and validation, member visibility for manual/rotation/claim modes, claim availability and duplicate/concurrent handling, filters and pagination, due-state variants, invalid identifiers, permissions, and household isolation.
+
+Out of scope:
+- Token authentication and token issuance: [#3](https://github.com/judricomo/homework_01/issues/3).
+- Household/membership models and role-management behavior: [#2](https://github.com/judricomo/homework_01/issues/2) and [#4](https://github.com/judricomo/homework_01/issues/4).
+- Chore/difficulty models: [#5](https://github.com/judricomo/homework_01/issues/5).
+- Assignment-mode models, manual assignment rules, and rotation scheduling: [#6](https://github.com/judricomo/homework_01/issues/6) and [#7](https://github.com/judricomo/homework_01/issues/7).
+- Recurrence calculation: [#8](https://github.com/judricomo/homework_01/issues/8).
+- Completion submission and approval/rejection transitions: [#10](https://github.com/judricomo/homework_01/issues/10).
+- Dedicated due/overdue notification surfaces: [#15](https://github.com/judricomo/homework_01/issues/15).
+- Points, streaks, badges, leaderboards, frontend views, and API-wide documentation: [#11](https://github.com/judricomo/homework_01/issues/11), [#12](https://github.com/judricomo/homework_01/issues/12), [#13](https://github.com/judricomo/homework_01/issues/13), [#14](https://github.com/judricomo/homework_01/issues/14), [#18](https://github.com/judricomo/homework_01/issues/18), and [#16](https://github.com/judricomo/homework_01/issues/16).
+
+Constraints:
+- Use Django REST Framework serializers, viewsets/routes, and reusable permission classes; keep household-scoped querysets explicit on every read and write path.
+- Consume the domain contracts from [#5](https://github.com/judricomo/homework_01/issues/5)–[#8](https://github.com/judricomo/homework_01/issues/8) and [#10](https://github.com/judricomo/homework_01/issues/10) rather than duplicating point, assignment, recurrence, or approval rules.
+- Keep claim operations transaction-safe and idempotent under concurrent requests; never expose or mutate another household's data through IDs, filters, ordering, or errors.
+- Keep the API frontend-agnostic and document routes, methods, fields, status codes, error shapes, ordering, pagination, and due-state definitions in [#16](https://github.com/judricomo/homework_01/issues/16).
+- Do not add multi-tenancy, self-service signup, external notifications, photo verification, custom badges, or per-chore streaks.
 
 ## 10. Implement completion submission and verification
 Status: Groomed in [#10](https://github.com/judricomo/homework_01/issues/10)
