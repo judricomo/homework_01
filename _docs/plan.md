@@ -29,6 +29,12 @@ Each chore has:
 3. Another household member must **approve** it.
 4. Only on approval do points, streaks, and badge checks apply.
 
+Rejected completion records are immutable history. In v1, rejection is
+terminal for that submitter and occurrence: the submitter cannot retry it and
+the API does not create a replacement completion route. Rejection leaves the
+assignment active for the assignment lifecycle, but it awards no
+points/streaks/badges and does not advance recurrence.
+
 ## Gamification
 
 - **Points**: auto-calculated from each chore's difficulty tag.

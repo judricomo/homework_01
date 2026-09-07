@@ -1,0 +1,32 @@
+- Tasks are GitHub issues, one at a time
+- Read the acceptance criteria before starting and before closing
+- Commit regularly
+
+Roles
+
+- PM - grooms a task before anyone implements it, follows _docs/team/pm.md
+- Software Engineer - implements one groomed task at a time, follows _docs/team/software-engineer.md
+- QA Engineer - checks finished work against the issue acceptance criteria, follows _docs/team/qa-engineer.md
+- Git Strategy & Integration Lead - owns Git standards, branch strategy, merge quality, and conflict resolution, follows _docs/team/git-strategy-integration-lead.md
+
+Orchestrator
+
+The main session is the orchestrator. It launches the PM, the engineer
+and QA as subagents. It does not groom, implement or test itself.
+
+Lifecycle
+
+1. Pick the next open issue from the backlog
+2. PM grooms it
+3. Engineer implements it
+4. QA verifies it
+5. On FAIL, back to step 3 with the QA comment as input
+6. On PASS, close the issue
+7. Repeat until the backlog is empty
+
+Rules
+
+- Do not skip step 2
+- The engineer does not close the issue
+- QA does not fix the code, only outputs PASS or FAIL
+- The orchestrator closes the issue only after QA outputs PASS
