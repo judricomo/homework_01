@@ -63,3 +63,11 @@ The planned domain is documented in `_docs/plan.md`, and the implementation sequ
 - Preserve the distinction between administrator capabilities and regular-member capabilities described in `_docs/plan.md`.
 - Add focused Django tests alongside the app behavior. Existing tests are in `chores/tests.py`; use Django’s test runner and target individual test paths when iterating.
 - Keep implementation work aligned with one backlog issue at a time and update `_docs/backlog.md` when a task’s acceptance criteria are completed.
+
+## Task workflow
+
+- Treat GitHub issues as the unit of work and implement one issue at a time.
+- Read the issue's acceptance criteria before starting and before closing the task.
+- Groom tasks before implementation using `_docs/pm.md` and the template in `_docs/task-template.md`.
+- Keep acceptance criteria checkable and document any moved scope as a linked follow-up issue.
+- Commit regularly and keep task-process guidance in `_docs/process.md`.
