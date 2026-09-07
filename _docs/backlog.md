@@ -348,19 +348,30 @@ Constraints:
 
 ## 14. Add all-time and current-period leaderboards
 Status: Groomed in [#14](https://github.com/judricomo/homework_01/issues/14)
-Goal: Expose historical and current-period rankings by approved points.
-Description: Build leaderboard endpoints for all-time totals and a current week or month view. Preserve historical ledger data across period boundaries and document the selected period and timezone rules.
+Goal: Expose household-scoped rankings that let members compare approved points earned all time and during the current calendar week.
+Description: Build read-only leaderboard endpoints for all-time totals and the current calendar week. Include every active household member, including members with zero qualifying points, and return each member's total and deterministic rank. The current period is Monday 00:00:00 through the following Monday 00:00:00 in Django's configured project timezone, represented as a half-open interval; the response exposes the period type, timezone, start, and exclusive end. Preserve the immutable points ledger across period boundaries.
 Acceptance criteria:
-- [ ] All-time rankings sum approved ledger points for household members.
-- [ ] Current-period rankings include only points inside the documented calendar period.
-- [ ] The period type, boundaries, and timezone are documented and exposed.
-- [ ] Pending and rejected completions are excluded.
-- [ ] Ties use stable documented ordering.
-- [ ] Period boundaries do not delete or reset all-time ledger history.
-- [ ] Focused tests cover boundaries, ties, zero points, and household isolation.
-Follow-ups:
-- Custom reporting periods and date ranges: [#19](https://github.com/judricomo/homework_01/issues/19)
-- Frontend leaderboard views: [#18](https://github.com/judricomo/homework_01/issues/18)
+- [ ] An authenticated household member can retrieve a read-only all-time leaderboard; each active household member appears once with the sum of that member's approved points, and a member with no approved points has total `0`.
+- [ ] An authenticated household member can retrieve a read-only current-period leaderboard; it uses the current calendar week in the project timezone, with an inclusive start at Monday 00:00:00 and an exclusive end at the next Monday 00:00:00.
+- [ ] The current-period total includes ledger awards whose timezone-aware award timestamp is within `[period_start, period_end)`; an award exactly at the start is included and one exactly at the exclusive end is excluded.
+- [ ] Both views read only the immutable points ledger and exclude pending or rejected completions and any award outside the requesting member's household.
+- [ ] Both views include only active memberships at query time; deactivated members and members from another household cannot appear or be used to access results.
+- [ ] Each response identifies the view (`all_time` or `current_period`), project timezone, and for the current-period view the period type, inclusive start, exclusive end, and server-evaluated reference time.
+- [ ] Ranking is deterministic: rows sort by total points descending, then stable member identifier ascending; ranks use competition ranking (`1, 1, 3`) and repeated identical requests return the same order and ranks.
+- [ ] A period rollover changes only current-period totals and metadata; it does not delete, reset, mutate, or re-date all-time ledger entries.
+- [ ] Unauthorized requests are rejected, and authenticated requests cannot obtain or infer another household's members or totals by changing an identifier or filter.
+- [ ] Focused tests cover authentication, approved totals, zero-point members, pending/rejected exclusion, exact period boundaries, timezone/DST behavior, rollover/history preservation, ties and rank numbering, inactive members, and household isolation.
+Out of scope:
+- Custom reporting periods, user-selected date ranges, and alternate period types: [#19](https://github.com/judricomo/homework_01/issues/19)
+- Frontend leaderboard screens, charts, and visualizations: [#18](https://github.com/judricomo/homework_01/issues/18)
+- Creating or changing points awards and the immutable ledger: [#11](https://github.com/judricomo/homework_01/issues/11)
+- Badge, streak, completion-review, and notification behavior: [#10](https://github.com/judricomo/homework_01/issues/10), [#12](https://github.com/judricomo/homework_01/issues/12), [#13](https://github.com/judricomo/homework_01/issues/13), and [#15](https://github.com/judricomo/homework_01/issues/15)
+Constraints:
+- Keep this task read-only and limited to the chores domain's leaderboard queries/endpoints, serializers, routes, focused tests, and required documentation.
+- Use the household and active-membership boundary from [#2](https://github.com/judricomo/homework_01/issues/2) and the immutable approved-award contract from [#11](https://github.com/judricomo/homework_01/issues/11); do not derive scores from mutable completion or chore fields.
+- Use Django's configured project timezone and timezone-aware datetimes; do not use rolling 7-day windows, client-local timezone, or a database reset job for v1.
+- Do not accept arbitrary period parameters in these endpoints. Expose server-calculated period metadata and leave custom ranges to [#19](https://github.com/judricomo/homework_01/issues/19).
+- Document endpoint paths, response fields, rank semantics, authorization, and error behavior in the API documentation follow-up [#16](https://github.com/judricomo/homework_01/issues/16).
 
 ## 15. Add in-app due and overdue notification surfaces
 Status: Groomed in [#15](https://github.com/judricomo/homework_01/issues/15)
