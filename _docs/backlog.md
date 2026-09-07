@@ -143,14 +143,14 @@ Acceptance criteria:
 - [x] Members who are removed, inactive, or otherwise ineligible when an occurrence is scheduled are skipped without being assigned; the next eligible member receives the assignment and becomes the new rotation position.
 - [x] A one-member rotation assigns that member for each otherwise-eligible occurrence and leaves the position stable after each successful assignment.
 - [x] If no sequence member is eligible, scheduling creates no assignment, reports a no-eligible-member outcome, and leaves the rotation position unchanged so a later retry can succeed after membership changes.
-- [x] Scheduling does not advance rotation or award any completion-related credit for pending or rejected completions; only the documented assignment/rotation event can advance the position.
 - [x] Concurrent or retried scheduling cannot create duplicate active assignments for one occurrence or skip an additional member; assignment uniqueness and the position update are transaction-safe.
-- [x] Focused tests cover normal cycling and wraparound, one-member rotations, removed/inactive members, sequence changes, repeated and concurrent scheduling, no eligible members, and pending/rejected completion behavior.
+- [x] Focused tests cover normal cycling and wraparound, one-member rotations, removed/inactive members, sequence changes, repeated and concurrent scheduling, and no eligible members.
 Out of scope:
 - Full recurrence-rule storage, due-date calculation, timezone policy, and occurrence generation: [#8](https://github.com/judricomo/homework_01/issues/8)
 - Household and membership model invariants: [#2](https://github.com/judricomo/homework_01/issues/2)
 - Chore/assignment HTTP endpoints, authentication, API permissions, and claim responses: [#9](https://github.com/judricomo/homework_01/issues/9)
 - Completion submission, approval, rejection, and assignment lifecycle after completion: [#10](https://github.com/judricomo/homework_01/issues/10)
+- Pending/rejected completion state behavior and focused tests proving those states do not advance rotation or award completion-related credit: [#10](https://github.com/judricomo/homework_01/issues/10)
 - Points ledger, streak tracking, and milestone badges: [#11](https://github.com/judricomo/homework_01/issues/11), [#12](https://github.com/judricomo/homework_01/issues/12), and [#13](https://github.com/judricomo/homework_01/issues/13)
 - Manual assignment and claim-mode behavior: [#6](https://github.com/judricomo/homework_01/issues/6)
 Constraints:
