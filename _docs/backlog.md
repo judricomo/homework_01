@@ -161,15 +161,31 @@ Constraints:
 
 ## 8. Add fixed and flexible recurrence rules
 Status: Groomed in [#8](https://github.com/judricomo/homework_01/issues/8)
-Goal: Calculate when chores become due again.
-Description: Support calendar-based recurrence for daily, weekly, every-N-days, and selected weekdays. Also support flexible recurrence based on N days after the last approved completion, with explicit timezone-aware date handling.
+Goal: Calculate the next due local date for a chore from its configured recurrence rule and anchor date. The result must be deterministic, timezone-aware, and based on approved completion history only where the flexible rule requires it.
+Description: Support fixed/calendar recurrence (daily, weekly, every N days, or selected weekdays) and flexible recurrence (N days after the most recent approved completion). Use the project timezone and explicit local-date semantics so engineers and API consumers get the same answer at date boundaries and daylight-saving transitions.
 Acceptance criteria:
-- [ ] Daily, weekly, every-N-days, and selected-weekday fixed rules are representable.
-- [ ] Flexible recurrence stores a positive interval after the last approved completion.
-- [ ] Missing, invalid, or contradictory recurrence values are rejected.
-- [ ] Next due dates are deterministic and timezone-aware.
-- [ ] Pending and rejected completions do not drive flexible recurrence.
-- [ ] Focused tests cover every rule, no prior completion, invalid values, and timezone boundaries.
+- [ ] A chore represents exactly one recurrence mode: fixed/calendar or flexible; fixed rules represent daily, weekly, every-N-days, or selected weekdays, and flexible rules store a positive whole-day interval.
+- [ ] Every chore has an explicit local-date anchor; when there is no prior approved completion, the first due date is the anchor date for both fixed and flexible rules.
+- [ ] Daily recurrence advances one local calendar day, weekly recurrence advances seven local calendar days, and every-N-days recurrence advances exactly N local calendar days from the prior due occurrence.
+- [ ] Selected-weekday recurrence stores at least one valid weekday, returns the next selected weekday after the prior due date, and wraps across the end of the week.
+- [ ] Flexible recurrence returns the anchor date when there is no approved completion and otherwise returns the most recent approved completion's local date plus the configured interval.
+- [ ] Pending and rejected completions, completions from another chore or household, and completions lacking approval do not affect a flexible next due date.
+- [ ] Missing, zero, negative, fractional, non-integer, or contradictory recurrence values are rejected before persistence; selected weekdays reject invalid values and an empty set.
+- [ ] A recurrence calculation is deterministic for the same rule, anchor, completion history, and project timezone, including at local midnight and across daylight-saving transitions.
+- [ ] Due-date calculations use local calendar dates rather than elapsed 24-hour durations; the documented project timezone is applied consistently when converting completion timestamps.
+- [ ] Focused tests cover every recurrence mode, first due date, weekday wraparound, approved versus pending/rejected history, invalid values, date boundaries, and daylight-saving transitions.
+
+Out of scope:
+- Rotation assignment advancement: [#7](https://github.com/judricomo/homework_01/issues/7).
+- Chore CRUD, recurrence configuration endpoints, and member-visible due/overdue responses: [#9](https://github.com/judricomo/homework_01/issues/9).
+- Completion submission, approval/rejection transitions, and the definition of an approved completion record: [#10](https://github.com/judricomo/homework_01/issues/10).
+- In-app due/overdue notification surfaces and their treatment of pending completions: [#15](https://github.com/judricomo/homework_01/issues/15).
+
+Constraints:
+- Keep recurrence data and calculations in the chores domain and use timezone-aware values with the project's configured timezone.
+- Do not infer due dates from unapproved activity, and do not award points, update streaks, or trigger badges here.
+- Treat a local calendar date as the recurrence unit; do not define recurrence by elapsed seconds or silently use the server's system timezone.
+- Keep this task independent of HTTP/API, assignment, completion-review, notification, and gamification workflows; integrate through their documented follow-up contracts.
 
 ## 9. Implement chore listing and assignment APIs
 Status: Groomed in [#9](https://github.com/judricomo/homework_01/issues/9)
