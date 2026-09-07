@@ -134,14 +134,30 @@ Constraints:
 ## 7. Implement rotation scheduling
 Status: Groomed in [#7](https://github.com/judricomo/homework_01/issues/7)
 Goal: Automatically assign rotation chores to household members in sequence.
-Description: Add the scheduling data and service logic for cycling a rotation chore through eligible household members. Define deterministic behavior when members are added, removed, or skipped.
+Description: Add the scheduling data and domain service for assigning each due rotation-chore occurrence to the next eligible household member. Preserve a deterministic order and cursor so retries, membership changes, and empty eligibility do not produce duplicate or surprising assignments.
 Acceptance criteria:
-- [ ] Rotation chores store an ordered member sequence and schedule data.
-- [ ] The next eligible member is selected deterministically.
-- [ ] A rotation event advances responsibility exactly once.
-- [ ] Removed or inactive members are skipped safely.
-- [ ] Repeated scheduling does not create duplicate active assignments.
-- [ ] Focused tests cover normal cycles, one-member cycles, removals, and no eligible members.
+- [ ] A rotation chore stores an explicit ordered sequence of household members and the rotation state needed to identify the next position; the sequence rejects members from another household and preserves a stable order when read back.
+- [ ] Scheduling accepts one identified due occurrence and selects the first active, eligible member at or after the stored position, wrapping to the beginning when necessary; the same inputs always select the same member.
+- [ ] A successful scheduling call creates exactly one active assignment for that occurrence and advances the rotation position exactly once, to the position after the assigned member.
+- [ ] Repeating scheduling for the same chore occurrence is idempotent: it returns or reuses the existing active assignment, does not create another assignment, and does not advance the position again.
+- [ ] Members who are removed, inactive, or otherwise ineligible when an occurrence is scheduled are skipped without being assigned; the next eligible member receives the assignment and becomes the new rotation position.
+- [ ] A one-member rotation assigns that member for each otherwise-eligible occurrence and leaves the position stable after each successful assignment.
+- [ ] If no sequence member is eligible, scheduling creates no assignment, reports the no-eligible-member outcome, and leaves the rotation position unchanged so a later retry can succeed after membership changes.
+- [ ] Scheduling does not advance rotation or award any completion-related credit for pending or rejected completions; only the documented assignment/rotation event can advance the position.
+- [ ] Concurrent or retried scheduling cannot create duplicate active assignments for one occurrence or skip an additional member; assignment uniqueness and the position update are transaction-safe.
+- [ ] Focused tests cover normal cycling and wraparound, one-member rotations, removed/inactive members, sequence changes, repeated and concurrent scheduling, no eligible members, and pending/rejected completion behavior.
+Out of scope:
+- Full recurrence-rule storage, due-date calculation, timezone policy, and occurrence generation: [#8](https://github.com/judricomo/homework_01/issues/8)
+- Household and membership model invariants: [#2](https://github.com/judricomo/homework_01/issues/2)
+- Chore/assignment HTTP endpoints, authentication, API permissions, and claim responses: [#9](https://github.com/judricomo/homework_01/issues/9)
+- Completion submission, approval, rejection, and assignment lifecycle after completion: [#10](https://github.com/judricomo/homework_01/issues/10)
+- Points ledger, streak tracking, and milestone badges: [#11](https://github.com/judricomo/homework_01/issues/11), [#12](https://github.com/judricomo/homework_01/issues/12), and [#13](https://github.com/judricomo/homework_01/issues/13)
+- Manual assignment and claim-mode behavior: [#6](https://github.com/judricomo/homework_01/issues/6)
+Constraints:
+- Use the household membership boundary from [#2](https://github.com/judricomo/homework_01/issues/2) and the rotation assignment invariants from [#6](https://github.com/judricomo/homework_01/issues/6); every read and write must remain household-scoped.
+- Keep rotation ordering, cursor updates, and idempotency in a transaction-safe chores domain service or task module. Do not add an external scheduler, HTTP endpoint, or recurrence engine in this task.
+- Treat the due occurrence identifier as the idempotency key; do not infer a new occurrence or silently overwrite an existing assignment.
+- Make ordering and eligibility rules explicit and deterministic, and preserve assignment history needed by completion and leaderboard follow-ups.
 
 ## 8. Add fixed and flexible recurrence rules
 Status: Groomed in [#8](https://github.com/judricomo/homework_01/issues/8)
