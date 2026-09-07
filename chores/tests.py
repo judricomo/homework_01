@@ -12,7 +12,7 @@ from rest_framework.response import Response
 from rest_framework.test import APIClient
 from rest_framework.views import APIView
 
-from .models import Household, Membership
+from .models import Chore, Household, Membership
 
 
 class ProjectLoadsTest(SimpleTestCase):
@@ -268,6 +268,73 @@ class MembershipManagementAPITests(TestCase):
         self.client.force_authenticate(None)
         response = self.client.get(self.list_url)
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class ChoreModelTests(TestCase):
+    def setUp(self):
+        self.household = Household.objects.create(name="Chore household")
+
+    def test_creation_and_retrieval_derive_points_for_each_difficulty(self):
+        for difficulty, points in Chore.DIFFICULTY_POINTS.items():
+            chore = Chore.objects.create(
+                household=self.household,
+                name=f"{difficulty} chore",
+                difficulty=difficulty,
+            )
+            self.assertEqual(chore.points, points)
+            self.assertEqual(Chore.objects.get(pk=chore.pk).points, points)
+
+    def test_changing_difficulty_recalculates_points(self):
+        chore = Chore.objects.create(
+            household=self.household, name="Sweep", difficulty=Chore.Difficulty.EASY
+        )
+
+        chore.difficulty = Chore.Difficulty.HARD
+        chore.save()
+
+        chore.refresh_from_db()
+        self.assertEqual(chore.points, Chore.DIFFICULTY_POINTS[Chore.Difficulty.HARD])
+
+    def test_invalid_difficulty_and_blank_name_are_rejected_without_changes(self):
+        chore = Chore.objects.create(
+            household=self.household, name="Wash dishes", difficulty=Chore.Difficulty.MEDIUM
+        )
+        original = (chore.name, chore.difficulty, chore.points)
+
+        for field, value in (("name", "  "), ("difficulty", "extreme")):
+            setattr(chore, field, value)
+            with self.assertRaises(ValidationError):
+                chore.save()
+            chore.refresh_from_db()
+            self.assertEqual((chore.name, chore.difficulty, chore.points), original)
+
+    def test_conflicting_points_are_rejected_without_changes(self):
+        chore = Chore.objects.create(
+            household=self.household, name="Mop", difficulty=Chore.Difficulty.EASY
+        )
+        chore.points = 99
+
+        with self.assertRaises(ValidationError):
+            chore.save()
+
+        chore.refresh_from_db()
+        self.assertEqual(chore.points, Chore.DIFFICULTY_POINTS[Chore.Difficulty.EASY])
+
+    def test_household_is_required_and_chore_can_be_deleted(self):
+        chore = Chore(
+            name="Take out trash",
+            difficulty=Chore.Difficulty.EASY,
+        )
+        with self.assertRaises(ValidationError):
+            chore.full_clean()
+
+        chore = Chore.objects.create(
+            household=self.household,
+            name="Take out trash",
+            difficulty=Chore.Difficulty.EASY,
+        )
+        chore.delete()
+        self.assertFalse(Chore.objects.filter(pk=chore.pk).exists())
 
 
 class ProtectedResourceView(APIView):
