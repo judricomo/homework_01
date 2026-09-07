@@ -458,11 +458,11 @@ class ChoreAssignmentTests(TransactionTestCase):
             close_old_connections()
             barrier.wait()
             try:
-                return ChoreAssignment.claim(
+                return ("winner", ChoreAssignment.claim(
                     chore, member, occurrence=occurrence
-                )
-            except ValidationError:
-                return None
+                ))
+            except ValidationError as exc:
+                return ("conflict", str(exc))
             finally:
                 close_old_connections()
 
@@ -471,11 +471,36 @@ class ChoreAssignmentTests(TransactionTestCase):
                 executor.map(claim, (self.member, self.competitor))
             )
 
-        self.assertEqual(sum(result is not None for result in results), 1)
+        self.assertEqual([result[0] for result in results].count("winner"), 1)
+        self.assertEqual([result[0] for result in results].count("conflict"), 1)
         self.assertEqual(
             ChoreAssignment.objects.filter(
                 chore=chore, occurrence=occurrence, is_active=True
             ).count(),
+            1,
+        )
+
+    def test_concurrent_first_claims_share_one_generated_occurrence(self):
+        chore = self.chore(Chore.AssignmentMode.CLAIM)
+        barrier = threading.Barrier(2)
+
+        def claim(member):
+            close_old_connections()
+            barrier.wait()
+            try:
+                return ("winner", ChoreAssignment.claim(chore, member))
+            except ValidationError as exc:
+                return ("conflict", str(exc))
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(claim, (self.member, self.competitor)))
+
+        self.assertEqual([result[0] for result in results].count("winner"), 1)
+        self.assertEqual([result[0] for result in results].count("conflict"), 1)
+        self.assertEqual(
+            ChoreAssignment.objects.filter(chore=chore, is_active=True).count(),
             1,
         )
 

@@ -1,7 +1,8 @@
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
-from django.db import models
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, OperationalError, connection, models, transaction
+from django.db.models import F
+import time
 import uuid
 
 
@@ -196,6 +197,9 @@ class RotationMember(models.Model):
 
 
 class ChoreAssignment(models.Model):
+    SQLITE_LOCK_RETRIES = 5
+    SQLITE_LOCK_RETRY_DELAY = 0.02
+
     class AssignmentType(models.TextChoices):
         MANUAL = Chore.AssignmentMode.MANUAL, "Manual"
         CLAIM = Chore.AssignmentMode.CLAIM, "Claim"
@@ -251,16 +255,36 @@ class ChoreAssignment(models.Model):
     def claim(cls, chore, membership, *, occurrence=None):
         if chore.assignment_mode != Chore.AssignmentMode.CLAIM:
             raise ValidationError("Claims are only valid for claim-mode chores.")
-        if occurrence is None:
-            existing = cls.objects.filter(chore=chore, is_active=True).first()
-            occurrence = existing.occurrence if existing else uuid.uuid4()
-        try:
-            with transaction.atomic():
-                return cls.objects.create(
-                    chore=chore,
-                    membership=membership,
-                    occurrence=occurrence,
-                    assignment_type=cls.AssignmentType.CLAIM,
-                )
-        except IntegrityError as exc:
-            raise ValidationError("This chore occurrence has already been claimed.") from exc
+        for attempt in range(cls.SQLITE_LOCK_RETRIES + 1):
+            try:
+                with transaction.atomic():
+                    # SQLite does not implement SELECT FOR UPDATE. A no-op
+                    # update obtains its write lock before the occurrence is
+                    # selected, so concurrent first claims serialize safely.
+                    chore_row = Chore.objects.select_for_update().get(pk=chore.pk)
+                    if connection.vendor == "sqlite":
+                        Chore.objects.filter(pk=chore_row.pk).update(name=F("name"))
+                    claim_occurrence = occurrence
+                    if claim_occurrence is None:
+                        existing = cls.objects.filter(
+                            chore=chore_row, is_active=True
+                        ).first()
+                        claim_occurrence = (
+                            existing.occurrence if existing else uuid.uuid4()
+                        )
+                    return cls.objects.create(
+                        chore=chore_row,
+                        membership=membership,
+                        occurrence=claim_occurrence,
+                        assignment_type=cls.AssignmentType.CLAIM,
+                    )
+            except IntegrityError as exc:
+                raise ValidationError(
+                    "This chore occurrence has already been claimed."
+                ) from exc
+            except OperationalError as exc:
+                if "locked" not in str(exc).lower() or attempt == cls.SQLITE_LOCK_RETRIES:
+                    raise ValidationError(
+                        "This chore occurrence could not be claimed due to concurrent activity."
+                    ) from exc
+                time.sleep(cls.SQLITE_LOCK_RETRY_DELAY * (attempt + 1))
