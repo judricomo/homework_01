@@ -1371,6 +1371,89 @@ class MemberStreakTests(TestCase):
                 MemberStreak.record_approved_completion(completion)
         self.assertFalse(MemberActivityDay.objects.exists())
 
+        with self.assertRaises(ValidationError):
+            MemberStreak.activity_date_for(None)
+        self.assertFalse(MemberActivityDay.objects.exists())
+
+    def test_cross_household_completion_cannot_write_this_members_streak(self):
+        other_household = Household.objects.create(name="Other streak household")
+        other_member = Membership.objects.create(
+            household=other_household,
+            user=get_user_model().objects.create_user(username="other-streak-member"),
+            role=Membership.Role.MEMBER,
+        )
+        other_chore = Chore.objects.create(
+            household=other_household,
+            name="Other streak chore",
+            difficulty=Chore.Difficulty.EASY,
+            assignment_mode=Chore.AssignmentMode.MANUAL,
+        )
+        other_assignment = ChoreAssignment.create_manual(other_chore, other_member)
+        other_completion = Completion.objects.create(
+            household=other_household,
+            chore=other_chore,
+            assignment=other_assignment,
+            submitted_by=other_member,
+            occurrence=other_assignment.occurrence,
+            status=Completion.Status.APPROVED,
+            reviewer=self.member,
+            reviewed_at=timezone.now(),
+        )
+        Completion.objects.filter(pk=other_completion.pk).update(
+            submitted_at=timezone.make_aware(datetime(2026, 4, 1))
+        )
+        other_completion.refresh_from_db()
+
+        MemberStreak.record_approved_completion(other_completion)
+
+        self.assertFalse(
+            MemberActivityDay.objects.filter(membership=self.member).exists()
+        )
+        self.assertEqual(
+            MemberActivityDay.objects.filter(membership=other_member).count(), 1
+        )
+        with self.assertRaises(ValidationError):
+            invalid = self.completion(timezone.now())
+            Completion.objects.filter(pk=invalid.pk).update(
+                household=other_household.pk
+            )
+            invalid.refresh_from_db()
+            MemberStreak.record_approved_completion(invalid)
+
+    def test_explicit_single_and_multi_day_gaps_reset_current_streak(self):
+        for day in (date(2026, 4, 1), date(2026, 4, 2), date(2026, 4, 4), date(2026, 4, 7)):
+            MemberStreak.record_approved_completion(
+                self.completion(
+                    timezone.make_aware(datetime.combine(day, datetime.min.time()))
+                )
+            )
+
+        streak = MemberStreak.objects.get(membership=self.member)
+        self.assertEqual(streak.current_streak, 1)
+        self.assertEqual(streak.best_streak, 2)
+        self.assertEqual(streak.last_activity_date, date(2026, 4, 7))
+
+    def test_transaction_failure_rolls_back_activity_day_and_streak_update(self):
+        completion = self.completion(timezone.make_aware(datetime(2026, 4, 1)))
+        original_save = MemberStreak.save
+
+        def fail_save(instance, *args, **kwargs):
+            raise IntegrityError("forced activity persistence failure")
+
+        MemberStreak.save = fail_save
+        try:
+            with self.assertRaises(IntegrityError):
+                MemberStreak.record_approved_completion(completion)
+        finally:
+            MemberStreak.save = original_save
+
+        self.assertFalse(MemberActivityDay.objects.exists())
+        streak = MemberStreak.objects.get(membership=self.member)
+        self.assertEqual(
+            (streak.current_streak, streak.best_streak, streak.last_activity_date),
+            (0, 0, None),
+        )
+
     @override_settings(TIME_ZONE="America/Los_Angeles")
     def test_activity_date_uses_project_timezone_across_midnight_and_dst(self):
         before_midnight = self.completion(datetime.fromisoformat("2026-03-08T07:30:00+00:00"))
@@ -1381,6 +1464,80 @@ class MemberStreakTests(TestCase):
             list(MemberActivityDay.objects.values_list("activity_date", flat=True)),
             [date(2026, 3, 7), date(2026, 3, 8)],
         )
+
+    @override_settings(TIME_ZONE="America/Los_Angeles")
+    def test_activity_date_is_stable_for_both_sides_of_dst_fall_back(self):
+        first = self.completion(datetime.fromisoformat("2026-11-01T08:30:00+00:00"))
+        second = self.completion(datetime.fromisoformat("2026-11-01T09:30:00+00:00"))
+        MemberStreak.record_approved_completion(first)
+        MemberStreak.record_approved_completion(second)
+
+        self.assertEqual(
+            list(
+                MemberActivityDay.objects.filter(membership=self.member).values_list(
+                    "activity_date", flat=True
+                )
+            ),
+            [date(2026, 11, 1)],
+        )
+        streak = MemberStreak.objects.get(membership=self.member)
+        self.assertEqual((streak.current_streak, streak.best_streak), (1, 1))
+
+
+class MemberStreakConcurrencyTests(TransactionTestCase):
+    reset_sequences = True
+
+    def setUp(self):
+        user_model = get_user_model()
+        self.household = Household.objects.create(name="Concurrent streak household")
+        self.member = Membership.objects.create(
+            household=self.household,
+            user=user_model.objects.create_user(username="concurrent-streak-member"),
+            role=Membership.Role.MEMBER,
+        )
+        self.chore = Chore.objects.create(
+            household=self.household,
+            name="Concurrent streak chore",
+            difficulty=Chore.Difficulty.EASY,
+            assignment_mode=Chore.AssignmentMode.MANUAL,
+        )
+        assignment = ChoreAssignment.create_manual(
+            self.chore, self.member, occurrence=uuid.uuid4()
+        )
+        self.completion = Completion.objects.create(
+            household=self.household,
+            chore=self.chore,
+            assignment=assignment,
+            submitted_by=self.member,
+            occurrence=assignment.occurrence,
+            status=Completion.Status.APPROVED,
+            reviewer=self.member,
+            reviewed_at=timezone.now(),
+        )
+        Completion.objects.filter(pk=self.completion.pk).update(
+            submitted_at=timezone.make_aware(datetime(2026, 4, 1))
+        )
+
+    def test_concurrent_recording_is_idempotent(self):
+        barrier = threading.Barrier(2)
+
+        def record():
+            close_old_connections()
+            try:
+                barrier.wait()
+                return MemberStreak.record_approved_completion(self.completion.pk)
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            streaks = list(executor.map(lambda _: record(), (1, 2)))
+
+        self.assertEqual(streaks[0].pk, streaks[1].pk)
+        self.assertEqual(
+            MemberActivityDay.objects.filter(membership=self.member).count(), 1
+        )
+        streak = MemberStreak.objects.get(membership=self.member)
+        self.assertEqual((streak.current_streak, streak.best_streak), (1, 1))
 
 
 class PointsLedgerTests(TestCase):
