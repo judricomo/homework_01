@@ -12,7 +12,7 @@ from rest_framework.response import Response
 from rest_framework.test import APIClient
 from rest_framework.views import APIView
 
-from .models import Chore, Household, Membership
+from .models import Chore, ChoreAssignment, Household, Membership, RotationMember
 
 
 class ProjectLoadsTest(SimpleTestCase):
@@ -280,13 +280,15 @@ class ChoreModelTests(TestCase):
                 household=self.household,
                 name=f"{difficulty} chore",
                 difficulty=difficulty,
+                assignment_mode=Chore.AssignmentMode.MANUAL,
             )
             self.assertEqual(chore.points, points)
             self.assertEqual(Chore.objects.get(pk=chore.pk).points, points)
 
     def test_changing_difficulty_recalculates_points(self):
         chore = Chore.objects.create(
-            household=self.household, name="Sweep", difficulty=Chore.Difficulty.EASY
+            household=self.household, name="Sweep", difficulty=Chore.Difficulty.EASY,
+            assignment_mode=Chore.AssignmentMode.MANUAL,
         )
 
         chore.difficulty = Chore.Difficulty.HARD
@@ -297,7 +299,8 @@ class ChoreModelTests(TestCase):
 
     def test_invalid_difficulty_and_blank_name_are_rejected_without_changes(self):
         chore = Chore.objects.create(
-            household=self.household, name="Wash dishes", difficulty=Chore.Difficulty.MEDIUM
+            household=self.household, name="Wash dishes", difficulty=Chore.Difficulty.MEDIUM,
+            assignment_mode=Chore.AssignmentMode.MANUAL,
         )
         original = (chore.name, chore.difficulty, chore.points)
 
@@ -310,7 +313,8 @@ class ChoreModelTests(TestCase):
 
     def test_conflicting_points_are_rejected_without_changes(self):
         chore = Chore.objects.create(
-            household=self.household, name="Mop", difficulty=Chore.Difficulty.EASY
+            household=self.household, name="Mop", difficulty=Chore.Difficulty.EASY,
+            assignment_mode=Chore.AssignmentMode.MANUAL,
         )
         chore.points = 99
 
@@ -332,9 +336,97 @@ class ChoreModelTests(TestCase):
             household=self.household,
             name="Take out trash",
             difficulty=Chore.Difficulty.EASY,
+            assignment_mode=Chore.AssignmentMode.MANUAL,
         )
         chore.delete()
         self.assertFalse(Chore.objects.filter(pk=chore.pk).exists())
+
+
+class ChoreAssignmentTests(TestCase):
+    def setUp(self):
+        self.household = Household.objects.create(name="Assignments")
+        self.user = get_user_model().objects.create_user(username="assignable")
+        self.member = Membership.objects.create(
+            household=self.household, user=self.user, role=Membership.Role.MEMBER
+        )
+        self.other_household = Household.objects.create(name="Other")
+        other_user = get_user_model().objects.create_user(username="outsider")
+        self.outsider = Membership.objects.create(
+            household=self.other_household, user=other_user, role=Membership.Role.MEMBER
+        )
+
+    def chore(self, mode):
+        return Chore.objects.create(
+            household=self.household, name=f"{mode} chore",
+            difficulty=Chore.Difficulty.EASY, assignment_mode=mode,
+        )
+
+    def test_modes_are_required_and_invalid_values_rejected(self):
+        chore = Chore(
+            household=self.household, name="Invalid", difficulty=Chore.Difficulty.EASY,
+            assignment_mode="bogus",
+        )
+        with self.assertRaises(ValidationError):
+            chore.full_clean()
+        chore.assignment_mode = None
+        with self.assertRaises(ValidationError):
+            chore.full_clean()
+
+    def test_manual_assignment_is_household_and_active_member_scoped(self):
+        chore = self.chore(Chore.AssignmentMode.MANUAL)
+        assignment = ChoreAssignment.create_manual(chore, self.member)
+        self.assertEqual(assignment.membership, self.member)
+        self.member.is_active = False
+        self.member.save()
+        with self.assertRaises(ValidationError):
+            ChoreAssignment.create_manual(chore, self.member)
+        with self.assertRaises(ValidationError):
+            ChoreAssignment.create_manual(chore, self.outsider)
+        self.assertEqual(ChoreAssignment.objects.count(), 1)
+
+    def test_claim_is_unclaimed_then_has_one_winner(self):
+        chore = self.chore(Chore.AssignmentMode.CLAIM)
+        self.assertTrue(chore.is_unclaimed)
+        winner = ChoreAssignment.claim(chore, self.member)
+        chore.refresh_from_db()
+        self.assertFalse(chore.is_unclaimed)
+        self.assertEqual(chore.active_assignment, winner)
+        with self.assertRaises(ValidationError):
+            ChoreAssignment.claim(chore, self.member)
+        self.assertEqual(ChoreAssignment.objects.count(), 1)
+
+    def test_incompatible_operations_have_no_side_effects(self):
+        manual = self.chore(Chore.AssignmentMode.MANUAL)
+        claim = self.chore(Chore.AssignmentMode.CLAIM)
+        rotation = self.chore(Chore.AssignmentMode.ROTATION)
+        before = ChoreAssignment.objects.count()
+        with self.assertRaises(ValidationError):
+            ChoreAssignment.claim(manual, self.member)
+        with self.assertRaises(ValidationError):
+            ChoreAssignment.create_manual(claim, self.member)
+        with self.assertRaises(ValidationError):
+            ChoreAssignment.create_manual(rotation, self.member)
+        self.assertEqual(ChoreAssignment.objects.count(), before)
+
+    def test_mode_change_rejects_conflicting_active_assignment(self):
+        chore = self.chore(Chore.AssignmentMode.MANUAL)
+        ChoreAssignment.create_manual(chore, self.member)
+        chore.assignment_mode = Chore.AssignmentMode.CLAIM
+        with self.assertRaises(ValidationError):
+            chore.save()
+        chore.refresh_from_db()
+        self.assertEqual(chore.assignment_mode, Chore.AssignmentMode.MANUAL)
+
+    def test_rotation_members_preserve_order_and_household_boundary(self):
+        chore = self.chore(Chore.AssignmentMode.ROTATION)
+        rotation = RotationMember.objects.create(
+            chore=chore, membership=self.member, position=1
+        )
+        self.assertEqual(chore.rotation_members.get(), rotation)
+        with self.assertRaises(ValidationError):
+            RotationMember.objects.create(
+                chore=chore, membership=self.outsider, position=2
+            )
 
 
 class ProtectedResourceView(APIView):
