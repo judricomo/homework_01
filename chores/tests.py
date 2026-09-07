@@ -119,6 +119,136 @@ class HouseholdMembershipTests(TestCase):
         self.assertFalse(Membership.objects.filter(pk=membership.pk).exists())
 
 
+class MembershipManagementAPITests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user_model = get_user_model()
+        self.household = Household.objects.create(name="Admin household")
+        self.admin = self.user_model.objects.create_user(
+            username="administrator", email="ADMIN@example.com"
+        )
+        self.admin_membership = Membership.objects.create(
+            household=self.household, user=self.admin, role=Membership.Role.ADMIN
+        )
+        self.list_url = reverse("membership-list")
+        self.client.force_authenticate(self.admin)
+
+    def add_user(self, username, email):
+        return self.user_model.objects.create_user(username=username, email=email)
+
+    def test_admin_can_add_member_with_normalized_email_and_response(self):
+        user = self.add_user("new-member", "new@example.com")
+
+        response = self.client.post(
+            self.list_url, {"email": "  NEW@EXAMPLE.COM "}, format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        membership = Membership.objects.get(user=user)
+        self.assertEqual(membership.role, Membership.Role.MEMBER)
+        self.assertEqual(response.data["user"]["id"], user.id)
+        self.assertEqual(response.data["household"]["id"], self.household.id)
+        self.assertEqual(response.data["role"], Membership.Role.MEMBER)
+
+    def test_add_rejects_unknown_duplicate_and_ambiguous_emails_without_changes(self):
+        before = Membership.objects.count()
+        response = self.client.post(
+            self.list_url, {"email": "unknown@example.com"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(Membership.objects.count(), before)
+
+        member = self.add_user("existing", "existing@example.com")
+        Membership.objects.create(
+            household=self.household, user=member, role=Membership.Role.MEMBER
+        )
+        response = self.client.post(
+            self.list_url, {"email": " EXISTING@EXAMPLE.COM "}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(Membership.objects.filter(user=member).count(), 1)
+
+        self.add_user("ambiguous-one", "same@example.com")
+        self.add_user("ambiguous-two", "SAME@example.com")
+        response = self.client.post(
+            self.list_url, {"email": "same@example.com"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(Membership.objects.count(), before + 1)
+
+    def test_admin_can_list_retrieve_change_role_and_remove_member(self):
+        member = self.add_user("member", "member@example.com")
+        membership = Membership.objects.create(
+            household=self.household, user=member, role=Membership.Role.MEMBER
+        )
+
+        response = self.client.get(self.list_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 2)
+        response = self.client.get(reverse("membership-detail", args=[membership.id]))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        response = self.client.patch(
+            reverse("membership-detail", args=[membership.id]),
+            {"role": Membership.Role.ADMIN},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        membership.refresh_from_db()
+        self.assertEqual(membership.role, Membership.Role.ADMIN)
+
+        response = self.client.delete(
+            reverse("membership-detail", args=[membership.id])
+        )
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Membership.objects.filter(pk=membership.id).exists())
+
+    def test_last_admin_cannot_be_demoted_or_removed(self):
+        detail_url = reverse("membership-detail", args=[self.admin_membership.id])
+
+        response = self.client.patch(
+            detail_url, {"role": Membership.Role.MEMBER}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(self.admin_membership.role, Membership.Role.ADMIN)
+
+        response = self.client.delete(detail_url)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertTrue(Membership.objects.filter(pk=self.admin_membership.id).exists())
+
+    def test_regular_member_is_forbidden_and_other_household_is_scoped_out(self):
+        member = self.add_user("regular", "regular@example.com")
+        membership = Membership.objects.create(
+            household=self.household, user=member, role=Membership.Role.MEMBER
+        )
+        other_household = Household.objects.create(name="Other")
+        other_admin = self.add_user("other-admin", "other@example.com")
+        other_membership = Membership.objects.create(
+            household=other_household, user=other_admin, role=Membership.Role.ADMIN
+        )
+
+        self.client.force_authenticate(member)
+        for method, url, data in (
+            ("get", self.list_url, None),
+            ("post", self.list_url, {"email": "regular@example.com"}),
+            ("patch", reverse("membership-detail", args=[membership.id]), {"role": "admin"}),
+            ("delete", reverse("membership-detail", args=[membership.id]), None),
+        ):
+            response = getattr(self.client, method)(url, data, format="json") if data else getattr(self.client, method)(url)
+            self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.get(
+            reverse("membership-detail", args=[other_membership.id])
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_unauthenticated_membership_requests_are_rejected(self):
+        self.client.force_authenticate(None)
+        response = self.client.get(self.list_url)
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
 class ProtectedResourceView(APIView):
     def get(self, request):
         return Response({"username": request.user.username})
