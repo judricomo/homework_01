@@ -1382,6 +1382,39 @@ class PointsLedgerTests(TestCase):
         with self.assertRaises(Completion.DoesNotExist):
             PointsLedger.award_for_completion(999999)
 
+    def test_true_cross_household_invalid_completion_has_no_side_effect(self):
+        other_household = Household.objects.create(name="Other points household")
+        other_member = Membership.objects.create(
+            household=other_household,
+            user=self.user_model.objects.create_user(username="other-scorer"),
+            role=Membership.Role.MEMBER,
+        )
+        other_chore = Chore.objects.create(
+            household=other_household,
+            name="Other vacuum",
+            difficulty=Chore.Difficulty.EASY,
+            assignment_mode=Chore.AssignmentMode.MANUAL,
+        )
+        other_assignment = ChoreAssignment.create_manual(
+            other_chore, other_member, occurrence=uuid.uuid4()
+        )
+        invalid = Completion.objects.create(
+            household=self.household,
+            chore=other_chore,
+            assignment=other_assignment,
+            submitted_by=other_member,
+            occurrence=other_assignment.occurrence,
+            status=Completion.Status.APPROVED,
+            reviewer=self.member,
+            reviewed_at=timezone.now(),
+        )
+
+        before = PointsLedger.objects.count()
+        with self.assertRaises(ValidationError):
+            PointsLedger.award_for_completion(invalid)
+
+        self.assertEqual(PointsLedger.objects.count(), before)
+
     def test_duplicate_retries_are_idempotent(self):
         first = PointsLedger.award_for_completion(self.completion)
         second = PointsLedger.award_for_completion(self.completion)
@@ -1404,3 +1437,71 @@ class PointsLedgerTests(TestCase):
         )
         self.assertEqual(PointsLedger.total_for_member(other_member), 0)
         self.assertEqual(PointsLedger.total_for_household(self.household)[self.member.id], 1)
+
+
+class PointsLedgerConcurrencyTests(TransactionTestCase):
+    reset_sequences = True
+
+    def setUp(self):
+        user_model = get_user_model()
+        self.household = Household.objects.create(name="Concurrent points household")
+        self.member = Membership.objects.create(
+            household=self.household,
+            user=user_model.objects.create_user(username="concurrent-scorer"),
+            role=Membership.Role.MEMBER,
+        )
+        self.chore = Chore.objects.create(
+            household=self.household,
+            name="Concurrent vacuum",
+            difficulty=Chore.Difficulty.EASY,
+            assignment_mode=Chore.AssignmentMode.MANUAL,
+        )
+        self.assignment = ChoreAssignment.create_manual(
+            self.chore, self.member, occurrence=uuid.uuid4()
+        )
+        self.completion = Completion.objects.create(
+            household=self.household,
+            chore=self.chore,
+            assignment=self.assignment,
+            submitted_by=self.member,
+            occurrence=self.assignment.occurrence,
+            status=Completion.Status.APPROVED,
+            reviewer=self.member,
+            reviewed_at=timezone.now(),
+        )
+
+    def test_concurrent_awards_are_idempotent(self):
+        barrier = threading.Barrier(2)
+
+        def award():
+            close_old_connections()
+            try:
+                barrier.wait()
+                return PointsLedger.award_for_completion(self.completion.pk)
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            awards = list(executor.map(lambda _: award(), (1, 2)))
+
+        self.assertEqual(awards[0].pk, awards[1].pk)
+        self.assertEqual(
+            PointsLedger.objects.filter(completion=self.completion).count(), 1
+        )
+
+    def test_persistence_failure_rolls_back_partial_ledger_write(self):
+        original_save = PointsLedger.save
+
+        def fail_before_persist(instance, *args, **kwargs):
+            raise IntegrityError("forced persistence failure")
+
+        PointsLedger.save = fail_before_persist
+        try:
+            with self.assertRaises(ValidationError):
+                PointsLedger.award_for_completion(self.completion.pk)
+        finally:
+            PointsLedger.save = original_save
+
+        self.assertEqual(
+            PointsLedger.objects.filter(completion=self.completion).count(), 0
+        )
