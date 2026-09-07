@@ -83,15 +83,26 @@ Constraints:
 
 ## 5. Define chore and difficulty point models
 Status: Groomed in [#5](https://github.com/judricomo/homework_01/issues/5)
-Goal: Store chores with the difficulty and point values required for scoring.
-Description: Create the Chore model and the difficulty choices easy, medium, and hard. Centralize the configured point values and ensure a chore's points are derived from its difficulty rather than entered independently.
+Goal: Define the foundational Chore model with a controlled difficulty and deterministic, difficulty-derived points.
+Description: Create the Chore model associated with exactly one household. Require a trimmed non-blank name and one of the `easy`, `medium`, or `hard` difficulty choices, using the canonical mapping `easy = 1`, `medium = 3`, and `hard = 5`. Keep point derivation in one reusable domain location and reject conflicting client or model values.
 Acceptance criteria:
-- [ ] A chore has a non-blank name and belongs to exactly one household.
-- [ ] Difficulty accepts only easy, medium, or hard.
-- [ ] Each difficulty maps to one centrally defined point value.
-- [ ] Conflicting client-supplied point values cannot be persisted.
-- [ ] Administrators can manage only chores in their household; regular members cannot modify them.
-- [ ] Migrations and focused tests cover validation, points, permissions, and scoping.
+- [ ] A chore requires exactly one household and a name that is non-blank after surrounding whitespace is trimmed.
+- [ ] Difficulty is required and accepts only `easy`, `medium`, or `hard`; invalid values cannot be persisted.
+- [ ] The canonical mapping is `easy = 1`, `medium = 3`, and `hard = 5`, defined once in the chores domain.
+- [ ] Creation and difficulty changes derive and store the matching points value.
+- [ ] Conflicting point values cannot be persisted, including through direct model updates.
+- [ ] Failed validation leaves an existing chore and its points unchanged.
+- [ ] Migrations apply cleanly and focused model tests cover valid/invalid values, derivation, tamper resistance, side-effect-free failures, and required household relationships.
+Out of scope:
+- Chore CRUD endpoints, household-scoped API querysets, and administrator/member API permissions: [#9](https://github.com/judricomo/homework_01/issues/9)
+- Assignment modes and assignment records: [#6](https://github.com/judricomo/homework_01/issues/6)
+- Rotation scheduling: [#7](https://github.com/judricomo/homework_01/issues/7)
+- Recurrence and due-date calculation: [#8](https://github.com/judricomo/homework_01/issues/8)
+- Completion approval and historical points awards: [#10](https://github.com/judricomo/homework_01/issues/10) and [#11](https://github.com/judricomo/homework_01/issues/11)
+Constraints:
+- Keep changes in `chores/models.py` and `chores/migrations/`; do not implement API endpoints in this task.
+- Use Django validation and database constraints where supported, with one reusable difficulty/points mapping.
+- Use the Household relationship from [#2](https://github.com/judricomo/homework_01/issues/2) and preserve the household boundary for downstream work.
 
 ## 6. Add chore assignment modes and assignments
 Status: Groomed in [#6](https://github.com/judricomo/homework_01/issues/6)
