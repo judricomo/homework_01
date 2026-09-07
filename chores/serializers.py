@@ -141,14 +141,18 @@ class ChoreWorkSerializer(ChoreSerializer):
         return obj.assignment_mode == Chore.AssignmentMode.CLAIM and not self._assignment(obj)
 
     def get_due_state(self, obj):
-        due = obj.next_due_date()
+        return self.due_state_for(obj)
+
+    def get_occurrence(self, obj):
+        assignment = self._assignment(obj)
+        return str(assignment.occurrence) if assignment else None
+
+    @staticmethod
+    def due_state_for(chore):
+        due = chore.next_due_date()
         today = timezone.localdate()
         if today > due:
             return "overdue"
         if today == due:
             return "due"
         return "upcoming"
-
-    def get_occurrence(self, obj):
-        assignment = self._assignment(obj)
-        return str(assignment.occurrence) if assignment else None

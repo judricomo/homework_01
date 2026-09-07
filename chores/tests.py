@@ -1,7 +1,7 @@
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 
 from django.contrib.auth import get_user_model
@@ -811,6 +811,97 @@ class ChoreAPITests(TestCase):
             assignment_mode=Chore.AssignmentMode.MANUAL,
         )
         response = self.client.get(reverse("chore-detail", args=[foreign.id]))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_member_queue_covers_rotation_matrix_and_filters(self):
+        rotation = Chore.objects.create(
+            household=self.household, name="Rotation", difficulty="easy",
+            assignment_mode=Chore.AssignmentMode.ROTATION,
+            recurrence_mode=Chore.RecurrenceMode.FLEXIBLE,
+        )
+        RotationMember.objects.create(
+            chore=rotation, membership=self.member_membership, position=1
+        )
+        occurrence = uuid.uuid4()
+        ChoreAssignment.schedule_rotation(rotation, occurrence)
+        claim = Chore.objects.create(
+            household=self.household, name="Pool", difficulty="medium",
+            assignment_mode=Chore.AssignmentMode.CLAIM,
+        )
+        manual = Chore.objects.create(
+            household=self.household, name="Manual", difficulty="hard",
+            assignment_mode=Chore.AssignmentMode.MANUAL,
+        )
+        ChoreAssignment.create_manual(manual, self.member_membership)
+        self.client.force_authenticate(self.member_user)
+
+        response = self.client.get(
+            reverse("my-chore-list"),
+            {"assignment_mode": "rotation"},
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual([item["name"] for item in response.data["results"]], ["Rotation"])
+        self.assertEqual(response.data["results"][0]["occurrence"], str(occurrence))
+
+        response = self.client.get(
+            reverse("my-chore-list"),
+            {"recurrence_mode": "flexible"},
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual([item["name"] for item in response.data["results"]], ["Rotation"])
+        response = self.client.get(
+            reverse("my-chore-list"), {"assignment_mode": "bogus"}
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("assignment_mode", response.data)
+        response = self.client.get(
+            reverse("my-chore-list"),
+            {"assignment_mode": ["manual", "claim"]},
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("assignment_mode", response.data)
+        self.assertEqual(
+            self.client.get(
+                reverse("my-chore-list"), {"assignment_mode": "claim"}
+            ).status_code,
+            status.HTTP_200_OK,
+        )
+
+    def test_queue_due_states_and_pagination_edges_are_explicit(self):
+        today = timezone.localdate()
+        for index, anchor in enumerate((today - timedelta(days=1), today, today + timedelta(days=1))):
+            chore = Chore.objects.create(
+                household=self.household, name=f"Due {index}", difficulty="easy",
+                assignment_mode=(
+                    Chore.AssignmentMode.MANUAL
+                    if index == 2 else Chore.AssignmentMode.CLAIM
+                ),
+                anchor_date=anchor,
+            )
+            if index == 2:
+                ChoreAssignment.create_manual(chore, self.member_membership)
+        self.client.force_authenticate(self.member_user)
+        for state, name in (("overdue", "Due 0"), ("due", "Due 1"), ("upcoming", "Due 2")):
+            response = self.client.get(reverse("my-chore-list"), {"due_state": state})
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertEqual([item["name"] for item in response.data["results"]], [name])
+        response = self.client.get(reverse("my-chore-list"), {"page": "999"})
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_member_permissions_and_inactive_claim_assignment_are_safe(self):
+        inactive = Chore.objects.create(
+            household=self.household, name="Inactive assignment", difficulty="easy",
+            assignment_mode=Chore.AssignmentMode.MANUAL,
+        )
+        assignment = ChoreAssignment.create_manual(inactive, self.member_membership)
+        assignment.is_active = False
+        assignment.save(update_fields=["is_active"])
+        non_member = self.user_model.objects.create_user(username="outsider")
+        self.client.force_authenticate(non_member)
+        response = self.client.get(reverse("my-chore-list"))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.client.force_authenticate(self.member_user)
+        response = self.client.post(reverse("my-chore-claim", args=[inactive.id]))
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
 

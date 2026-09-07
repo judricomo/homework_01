@@ -10,7 +10,7 @@ class IsHouseholdAdministrator(BasePermission):
         if not request.user.is_authenticated:
             return False
         return Membership.objects.filter(
-            user=request.user, role=Membership.Role.ADMIN
+            user=request.user, role=Membership.Role.ADMIN, is_active=True
         ).exists()
 
 

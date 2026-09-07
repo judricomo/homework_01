@@ -18,6 +18,37 @@ from .serializers import (
     ChoreWorkSerializer,
 )
 
+FILTER_VALUES = {
+    "assignment_mode": set(Chore.AssignmentMode.values),
+    "recurrence_mode": set(Chore.RecurrenceMode.values),
+    "due_state": {"upcoming", "due", "overdue"},
+}
+
+
+class ChoreFilterMixin:
+    """Apply the public, bounded chore-list filters without widening visibility."""
+
+    def filter_queryset(self, queryset):
+        queryset = super().filter_queryset(queryset)
+        for field, allowed in FILTER_VALUES.items():
+            values = self.request.query_params.getlist(field)
+            if not values:
+                continue
+            unique_values = set(values)
+            if len(unique_values) != 1 or next(iter(unique_values), None) not in allowed:
+                raise ValidationError(
+                    {field: f"Use one of: {', '.join(sorted(allowed))}."}
+                )
+            value = values[0]
+            if field != "due_state":
+                queryset = queryset.filter(**{field: value})
+            else:
+                queryset = [
+                    chore for chore in queryset
+                    if ChoreWorkSerializer.due_state_for(chore) == value
+                ]
+        return queryset
+
 
 class HouseholdMembershipMixin:
     permission_classes = (IsHouseholdAdministrator,)
@@ -109,7 +140,7 @@ class MembershipDetailView(
         instance.delete()
 
 
-class ChoreViewSet(viewsets.ModelViewSet):
+class ChoreViewSet(ChoreFilterMixin, viewsets.ModelViewSet):
     serializer_class = ChoreSerializer
     permission_classes = (IsHouseholdAdministrator,)
     pagination_class = type("ChorePagination", (PageNumberPagination,), {"page_size": 50})
@@ -131,7 +162,7 @@ class ChoreViewSet(viewsets.ModelViewSet):
         serializer.save(household=self.get_household())
 
 
-class ChoreQueueViewSet(viewsets.ReadOnlyModelViewSet):
+class ChoreQueueViewSet(ChoreFilterMixin, viewsets.ReadOnlyModelViewSet):
     permission_classes = (IsActiveHouseholdMember,)
     serializer_class = ChoreWorkSerializer
     pagination_class = type("ChorePagination", (PageNumberPagination,), {"page_size": 50})
