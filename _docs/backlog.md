@@ -407,6 +407,7 @@ Constraints:
 
 ## 16. Document API behavior and v1 scope
 Status: Groomed in [#16](https://github.com/judricomo/homework_01/issues/16)
+Documentation: [`_docs/api.md`](_docs/api.md)
 Goal: Publish a source-of-truth contract for the implemented v1 API so frontend developers and contributors can use it without inferring undocumented behavior.
 Description: Document authentication, every implemented endpoint, request/response/error shapes, role permissions, household isolation, state transitions, recurrence and due/overdue rules, scoring, streaks, badges, leaderboards, timezone boundaries, and explicit v1 exclusions. Verify examples and unresolved decisions against the running implementation rather than inventing behavior.
 Acceptance criteria:
