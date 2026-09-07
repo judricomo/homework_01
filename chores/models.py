@@ -105,6 +105,12 @@ class Chore(models.Model):
                 ),
                 name="chore_points_match_difficulty",
             ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    assignment_mode__in=("manual", "rotation", "claim")
+                ),
+                name="chore_assignment_mode_allowed_values",
+            ),
         ]
 
     def clean(self):

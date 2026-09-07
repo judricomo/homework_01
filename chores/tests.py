@@ -1,8 +1,12 @@
+import threading
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
-from django.db import IntegrityError
+from django.db import IntegrityError, close_old_connections, transaction
 from django.test import SimpleTestCase
-from django.test import TestCase
+from django.test import TestCase, TransactionTestCase
 from django.urls import path, reverse
 from django.test import override_settings
 from rest_framework import status
@@ -342,12 +346,18 @@ class ChoreModelTests(TestCase):
         self.assertFalse(Chore.objects.filter(pk=chore.pk).exists())
 
 
-class ChoreAssignmentTests(TestCase):
+class ChoreAssignmentTests(TransactionTestCase):
     def setUp(self):
         self.household = Household.objects.create(name="Assignments")
         self.user = get_user_model().objects.create_user(username="assignable")
         self.member = Membership.objects.create(
             household=self.household, user=self.user, role=Membership.Role.MEMBER
+        )
+        competing_user = get_user_model().objects.create_user(username="competitor")
+        self.competitor = Membership.objects.create(
+            household=self.household,
+            user=competing_user,
+            role=Membership.Role.MEMBER,
         )
         self.other_household = Household.objects.create(name="Other")
         other_user = get_user_model().objects.create_user(username="outsider")
@@ -372,6 +382,16 @@ class ChoreAssignmentTests(TestCase):
         with self.assertRaises(ValidationError):
             chore.full_clean()
 
+    def test_database_rejects_unknown_assignment_mode_without_model_validation(self):
+        chore = self.chore(Chore.AssignmentMode.MANUAL)
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                Chore.objects.filter(pk=chore.pk).update(assignment_mode="bogus")
+
+        chore.refresh_from_db()
+        self.assertEqual(chore.assignment_mode, Chore.AssignmentMode.MANUAL)
+
     def test_manual_assignment_is_household_and_active_member_scoped(self):
         chore = self.chore(Chore.AssignmentMode.MANUAL)
         assignment = ChoreAssignment.create_manual(chore, self.member)
@@ -394,6 +414,70 @@ class ChoreAssignmentTests(TestCase):
         with self.assertRaises(ValidationError):
             ChoreAssignment.claim(chore, self.member)
         self.assertEqual(ChoreAssignment.objects.count(), 1)
+
+    def test_competing_members_cannot_claim_the_same_occurrence(self):
+        chore = self.chore(Chore.AssignmentMode.CLAIM)
+        occurrence = uuid.uuid4()
+
+        winner = ChoreAssignment.claim(chore, self.member, occurrence=occurrence)
+        with self.assertRaises(ValidationError):
+            ChoreAssignment.claim(chore, self.competitor, occurrence=occurrence)
+
+        self.assertEqual(
+            list(
+                ChoreAssignment.objects.filter(
+                    chore=chore, occurrence=occurrence, is_active=True
+                )
+            ),
+            [winner],
+        )
+
+    def test_failed_claims_do_not_create_assignments_or_change_chore_state(self):
+        chore = self.chore(Chore.AssignmentMode.CLAIM)
+        self.member.is_active = False
+        self.member.save()
+        before = (chore.assignment_mode, ChoreAssignment.objects.count())
+
+        with self.assertRaises(ValidationError):
+            ChoreAssignment.claim(chore, self.member)
+        with self.assertRaises(ValidationError):
+            ChoreAssignment.claim(chore, self.outsider)
+
+        chore.refresh_from_db()
+        self.assertEqual(
+            (chore.assignment_mode, ChoreAssignment.objects.count()), before
+        )
+        self.assertIsNone(chore.active_assignment)
+
+    def test_concurrent_competing_claims_leave_one_winner(self):
+        chore = self.chore(Chore.AssignmentMode.CLAIM)
+        occurrence = uuid.uuid4()
+        barrier = threading.Barrier(2)
+
+        def claim(member):
+            close_old_connections()
+            barrier.wait()
+            try:
+                return ChoreAssignment.claim(
+                    chore, member, occurrence=occurrence
+                )
+            except ValidationError:
+                return None
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(
+                executor.map(claim, (self.member, self.competitor))
+            )
+
+        self.assertEqual(sum(result is not None for result in results), 1)
+        self.assertEqual(
+            ChoreAssignment.objects.filter(
+                chore=chore, occurrence=occurrence, is_active=True
+            ).count(),
+            1,
+        )
 
     def test_incompatible_operations_have_no_side_effects(self):
         manual = self.chore(Chore.AssignmentMode.MANUAL)
