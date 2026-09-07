@@ -918,6 +918,122 @@ class ChoreAPITests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
 
+class DueSurfaceAPITests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        user_model = get_user_model()
+        self.household = Household.objects.create(name="Due surfaces")
+        self.user = user_model.objects.create_user(username="due-member")
+        self.membership = Membership.objects.create(
+            household=self.household, user=self.user, role=Membership.Role.MEMBER
+        )
+        self.today = timezone.localdate()
+
+    def chore(self, name, anchor_date, mode=Chore.AssignmentMode.MANUAL):
+        chore = Chore.objects.create(
+            household=self.household, name=name, difficulty=Chore.Difficulty.EASY,
+            assignment_mode=mode, anchor_date=anchor_date,
+        )
+        assignment = None
+        if mode == Chore.AssignmentMode.MANUAL:
+            assignment = ChoreAssignment.create_manual(chore, self.membership)
+        return chore, assignment
+
+    def get_surface(self):
+        self.client.force_authenticate(self.user)
+        return self.client.get(reverse("due-overdue"))
+
+    def test_due_overdue_future_and_empty_shape_are_separated_at_date_boundary(self):
+        _, due = self.chore("Due", self.today)
+        _, overdue = self.chore("Overdue", self.today - timedelta(days=1))
+        self.chore("Future", self.today + timedelta(days=1))
+
+        response = self.get_surface()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual([item["chore"]["name"] for item in response.data["due"]], ["Due"])
+        self.assertEqual(
+            [item["chore"]["name"] for item in response.data["overdue"]], ["Overdue"]
+        )
+        self.assertEqual(response.data["due"][0]["occurrence"], str(due.occurrence))
+        self.assertEqual(response.data["due"][0]["due_state"], "due")
+        self.assertEqual(response.data["overdue"][0]["due_state"], "overdue")
+        self.assertIn("recurrence", response.data["due"][0])
+        self.assertEqual(response.data["timezone"], "UTC")
+
+        self.household.chores.all().delete()
+        response = self.get_surface()
+        self.assertEqual(response.data["due"], [])
+        self.assertEqual(response.data["overdue"], [])
+
+    def test_pending_and_rejected_remain_but_approved_is_removed_read_only(self):
+        pending_chore, pending_assignment = self.chore("Pending", self.today)
+        rejected_chore, rejected_assignment = self.chore("Rejected", self.today)
+        approved_chore, approved_assignment = self.chore("Approved", self.today)
+        reviewer = Membership.objects.create(
+            household=self.household,
+            user=get_user_model().objects.create_user(username="due-reviewer"),
+            role=Membership.Role.MEMBER,
+        )
+        for chore, assignment, status_value in (
+            (pending_chore, pending_assignment, Completion.Status.PENDING),
+            (rejected_chore, rejected_assignment, Completion.Status.REJECTED),
+            (approved_chore, approved_assignment, Completion.Status.APPROVED),
+        ):
+            Completion.objects.create(
+                household=self.household, chore=chore, assignment=assignment,
+                submitted_by=self.membership, occurrence=assignment.occurrence,
+                status=status_value,
+                reviewer=reviewer if status_value != Completion.Status.PENDING else None,
+                reviewed_at=timezone.now() if status_value != Completion.Status.PENDING else None,
+            )
+        before = list(ChoreAssignment.objects.values_list("is_active", flat=True))
+
+        response = self.get_surface()
+
+        self.assertEqual(
+            {item["chore"]["name"] for item in response.data["due"]},
+            {"Pending", "Rejected"},
+        )
+        self.assertEqual(
+            list(ChoreAssignment.objects.values_list("is_active", flat=True)), before
+        )
+
+    def test_claim_pool_is_visible_only_when_available_and_other_household_is_hidden(self):
+        claim, _ = self.chore("Claim", self.today, Chore.AssignmentMode.CLAIM)
+        unavailable, _ = self.chore("Unavailable", self.today, Chore.AssignmentMode.CLAIM)
+        unavailable_user = get_user_model().objects.create_user(username="busy-member")
+        unavailable_member = Membership.objects.create(
+            household=self.household, user=unavailable_user, role=Membership.Role.MEMBER
+        )
+        other_household = Household.objects.create(name="Other")
+        other_user = get_user_model().objects.create_user(username="other-member")
+        other_member = Membership.objects.create(
+            household=other_household, user=other_user, role=Membership.Role.MEMBER
+        )
+        other_chore = Chore.objects.create(
+            household=other_household, name="Foreign", difficulty="easy",
+            assignment_mode=Chore.AssignmentMode.MANUAL, anchor_date=self.today,
+        )
+        ChoreAssignment.create_manual(other_chore, other_member)
+        ChoreAssignment.claim(unavailable, unavailable_member)
+
+        response = self.get_surface()
+
+        self.assertEqual([item["chore"]["name"] for item in response.data["due"]], ["Claim"])
+        self.assertTrue(response.data["due"][0]["claimable"])
+        self.assertIsNone(response.data["due"][0]["occurrence"])
+
+    def test_authentication_and_active_membership_are_required(self):
+        response = self.client.get(reverse("due-overdue"))
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.client.force_authenticate(self.user)
+        self.membership.is_active = False
+        self.membership.save(update_fields=["is_active"])
+        response = self.client.get(reverse("due-overdue"))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+
 class CompletionAPITests(TestCase):
     def setUp(self):
         self.client = APIClient()

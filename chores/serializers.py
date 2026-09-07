@@ -23,6 +23,24 @@ class LeaderboardSerializer(serializers.Serializer):
     reference_time = serializers.DateTimeField(required=False)
 
 
+class DueSurfaceItemSerializer(serializers.Serializer):
+    chore = serializers.DictField()
+    occurrence = serializers.UUIDField(allow_null=True)
+    assignment = serializers.DictField(allow_null=True)
+    claimable = serializers.BooleanField()
+    due_date = serializers.DateField()
+    due_at = serializers.DateTimeField()
+    due_state = serializers.ChoiceField(choices=("due", "overdue"))
+    recurrence = serializers.DictField()
+
+
+class DueSurfaceSerializer(serializers.Serializer):
+    timezone = serializers.CharField()
+    as_of = serializers.DateTimeField()
+    due = DueSurfaceItemSerializer(many=True)
+    overdue = DueSurfaceItemSerializer(many=True)
+
+
 class MembershipSerializer(serializers.ModelSerializer):
     user = serializers.SerializerMethodField()
     household = serializers.SerializerMethodField()

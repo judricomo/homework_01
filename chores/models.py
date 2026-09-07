@@ -323,8 +323,10 @@ class Chore(models.Model):
                 continue
             if status is None and not getattr(completion, "is_approved", False):
                 continue
-            completed_at = getattr(completion, "completed_at", None) or getattr(
-                completion, "approved_at", None
+            completed_at = (
+                getattr(completion, "completed_at", None)
+                or getattr(completion, "approved_at", None)
+                or getattr(completion, "submitted_at", None)
             )
             if completed_at is None:
                 continue

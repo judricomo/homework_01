@@ -11,9 +11,11 @@ from django.conf import settings
 from django.db.models import Q, Sum
 from django.db.models.functions import Coalesce
 from datetime import datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 from .models import Chore, ChoreAssignment, Completion, Membership, PointsLedger
 from .permissions import IsActiveHouseholdMember, IsHouseholdAdministrator
+from .services import calculate_next_due_date
 from .serializers import (
     AddMembershipSerializer,
     MembershipRoleSerializer,
@@ -21,7 +23,7 @@ from .serializers import (
     ChoreSerializer,
     ChoreWorkSerializer,
     CompletionSerializer, CompletionSubmissionSerializer, CompletionReviewSerializer,
-    LeaderboardSerializer,
+    LeaderboardSerializer, DueSurfaceSerializer,
 )
 
 FILTER_VALUES = {
@@ -345,4 +347,87 @@ class LeaderboardView(generics.GenericAPIView):
                 "period_end": period_end,
                 "reference_time": reference_time,
             })
+        return Response(self.get_serializer(payload).data)
+
+
+class DueSurfaceView(generics.GenericAPIView):
+    """Read-only, household-scoped due and overdue work for the current member."""
+
+    permission_classes = (IsActiveHouseholdMember,)
+    serializer_class = DueSurfaceSerializer
+
+    def get_membership(self):
+        return Membership.objects.select_related("household", "user").get(
+            user=self.request.user, is_active=True
+        )
+
+    def get(self, request, *args, **kwargs):
+        membership = self.get_membership()
+        project_zone = ZoneInfo(settings.TIME_ZONE)
+        as_of = timezone.now()
+        local_today = timezone.localtime(as_of, project_zone).date()
+        chores = Chore.objects.filter(
+            household_id=membership.household_id,
+        ).prefetch_related("assignments__membership__user", "completions")
+
+        items = []
+        for chore in chores.order_by("id"):
+            approved = [
+                completion for completion in chore.completions.all()
+                if completion.status == Completion.Status.APPROVED
+            ]
+            due_date = calculate_next_due_date(chore, completions=approved)
+            if due_date > local_today:
+                continue
+
+            assignment = next(
+                (
+                    candidate for candidate in chore.assignments.all()
+                    if candidate.is_active
+                    and candidate.membership_id == membership.id
+                    and candidate.membership.is_active
+                ),
+                None,
+            )
+            claimable = (
+                chore.assignment_mode == Chore.AssignmentMode.CLAIM
+                and not any(candidate.is_active for candidate in chore.assignments.all())
+            )
+            if assignment is None and not claimable:
+                continue
+
+            # An approved occurrence is complete even if stale assignment data
+            # remains; pending and rejected records intentionally remain visible.
+            if assignment and any(
+                completion.occurrence == assignment.occurrence
+                and completion.status == Completion.Status.APPROVED
+                for completion in chore.completions.all()
+            ):
+                continue
+
+            due_at = timezone.make_aware(datetime.combine(due_date, time.min), project_zone)
+            due_state = "due" if local_today == due_date else "overdue"
+            items.append({
+                "chore": {"id": chore.id, "name": chore.name},
+                "occurrence": assignment.occurrence if assignment else None,
+                "assignment": (
+                    {
+                        "membership_id": assignment.membership_id,
+                        "username": assignment.membership.user.username,
+                    }
+                    if assignment else None
+                ),
+                "claimable": claimable,
+                "due_date": due_date,
+                "due_at": due_at,
+                "due_state": due_state,
+                "recurrence": ChoreSerializer(chore).data["recurrence"],
+            })
+
+        payload = {
+            "timezone": settings.TIME_ZONE,
+            "as_of": as_of,
+            "due": [item for item in items if item["due_state"] == "due"],
+            "overdue": [item for item in items if item["due_state"] == "overdue"],
+        }
         return Response(self.get_serializer(payload).data)

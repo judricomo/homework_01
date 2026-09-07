@@ -8,6 +8,7 @@ from .views import (
     MembershipDetailView,
     MembershipListCreateView,
     LeaderboardView,
+    DueSurfaceView,
 )
 
 router = DefaultRouter()
@@ -19,6 +20,7 @@ urlpatterns = [
     path("", include(router.urls)),
     path("members/", MembershipListCreateView.as_view(), name="membership-list"),
     path("leaderboard/", LeaderboardView.as_view(), name="leaderboard"),
+    path("due-overdue/", DueSurfaceView.as_view(), name="due-overdue"),
     path("leaderboard/all-time/", LeaderboardView.as_view(), name="leaderboard-all-time"),
     path(
         "leaderboard/current-period/",
