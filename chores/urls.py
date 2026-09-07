@@ -4,6 +4,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     ChoreQueueViewSet,
     ChoreViewSet,
+    CompletionViewSet,
     MembershipDetailView,
     MembershipListCreateView,
 )
@@ -11,6 +12,7 @@ from .views import (
 router = DefaultRouter()
 router.register("chores", ChoreViewSet, basename="chore")
 router.register("my-chores", ChoreQueueViewSet, basename="my-chore")
+router.register("completions", CompletionViewSet, basename="completion")
 
 urlpatterns = [
     path("", include(router.urls)),

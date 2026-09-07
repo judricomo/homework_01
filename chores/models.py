@@ -513,3 +513,109 @@ class ChoreAssignment(models.Model):
                         "This chore occurrence could not be scheduled due to concurrent activity."
                     ) from exc
                 time.sleep(cls.SQLITE_LOCK_RETRY_DELAY * (attempt + 1))
+
+
+class Completion(models.Model):
+    """Immutable self-reported history; rejected attempts are never mutated or retried."""
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        APPROVED = "approved", "Approved"
+        REJECTED = "rejected", "Rejected"
+
+    household = models.ForeignKey(Household, on_delete=models.CASCADE, related_name="completions")
+    chore = models.ForeignKey(Chore, on_delete=models.CASCADE, related_name="completions")
+    assignment = models.ForeignKey(
+        ChoreAssignment, on_delete=models.PROTECT, related_name="completions"
+    )
+    submitted_by = models.ForeignKey(
+        Membership, on_delete=models.PROTECT, related_name="submitted_completions"
+    )
+    occurrence = models.UUIDField()
+    status = models.CharField(max_length=9, choices=Status.choices, default=Status.PENDING)
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    reviewer = models.ForeignKey(
+        Membership, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="reviewed_completions",
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["chore", "occurrence"],
+                condition=models.Q(status__in=("pending", "approved")),
+                name="unique_open_completion_occurrence",
+            ),
+            models.UniqueConstraint(
+                fields=["chore", "occurrence", "submitted_by"],
+                condition=models.Q(status="rejected"),
+                name="unique_rejected_completion_submitter",
+            ),
+        ]
+        ordering = ["-submitted_at", "-pk"]
+
+    def clean(self):
+        super().clean()
+        if self.household_id != self.chore.household_id:
+            raise ValidationError({"household": "Completion household must match the chore."})
+        if self.assignment.chore_id != self.chore_id or self.assignment.occurrence != self.occurrence:
+            raise ValidationError({"occurrence": "Completion must match its assignment occurrence."})
+        if self.submitted_by.household_id != self.household_id or not self.submitted_by.is_active:
+            raise ValidationError({"submitted_by": "Submitter must be an active household member."})
+        if self.status != self.Status.PENDING and (not self.reviewer or not self.reviewed_at):
+            raise ValidationError({"reviewer": "Finalized completions require review history."})
+
+    @classmethod
+    def submit(cls, *, membership, chore, occurrence):
+        if not membership.is_active or membership.household_id != chore.household_id:
+            raise ValidationError("An active household member is required.")
+        with transaction.atomic():
+            assignment = (
+                ChoreAssignment.objects.select_for_update()
+                .filter(chore=chore, occurrence=occurrence, is_active=True)
+                .select_related("membership")
+                .first()
+            )
+            if not assignment or assignment.membership.household_id != membership.household_id:
+                raise ValidationError("This occurrence is not available to you.")
+            if assignment.membership_id != membership.id:
+                raise ValidationError("You are not eligible to complete this occurrence.")
+            if cls.objects.filter(chore=chore, occurrence=occurrence, status__in=("pending", "approved")).exists():
+                raise ValidationError("This occurrence already has a completion.")
+            if cls.objects.filter(
+                chore=chore, occurrence=occurrence, submitted_by=membership, status="rejected"
+            ).exists():
+                raise ValidationError("You already submitted and were rejected for this occurrence.")
+            try:
+                return cls.objects.create(
+                    household=membership.household,
+                    chore=chore,
+                    assignment=assignment,
+                    submitted_by=membership,
+                    occurrence=occurrence,
+                )
+            except IntegrityError as exc:
+                raise ValidationError("This occurrence already has a completion.") from exc
+
+    @classmethod
+    def review(cls, *, completion_id, reviewer, status):
+        if status not in (cls.Status.APPROVED, cls.Status.REJECTED):
+            raise ValidationError("Review status must be approved or rejected.")
+        with transaction.atomic():
+            completion = cls.objects.select_for_update().select_related(
+                "chore", "assignment", "submitted_by"
+            ).get(pk=completion_id)
+            if not reviewer.is_active or reviewer.household_id != completion.household_id:
+                raise ValidationError("Reviewer must be an active household member.")
+            if reviewer.id == completion.submitted_by_id:
+                raise ValidationError("You cannot review your own completion.")
+            if completion.status != cls.Status.PENDING:
+                raise ValidationError("This completion has already been reviewed.")
+            completion.status = status
+            completion.reviewer = reviewer
+            completion.reviewed_at = timezone.now()
+            completion.save(update_fields=["status", "reviewer", "reviewed_at"])
+            if status == cls.Status.APPROVED:
+                completion.assignment.is_active = False
+                completion.assignment.save(update_fields=["is_active"])
+            return completion

@@ -3,7 +3,7 @@ from rest_framework import serializers
 from django.utils import timezone
 
 from .models import Membership
-from .models import Chore, ChoreAssignment
+from .models import Chore, ChoreAssignment, Completion
 
 
 class MembershipSerializer(serializers.ModelSerializer):
@@ -156,3 +156,39 @@ class ChoreWorkSerializer(ChoreSerializer):
         if today == due:
             return "due"
         return "upcoming"
+
+
+class CompletionSerializer(serializers.ModelSerializer):
+    submitter = serializers.SerializerMethodField()
+    reviewer_detail = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Completion
+        fields = (
+            "id", "chore", "assignment", "occurrence", "status",
+            "submitted_at", "submitter", "reviewer_detail", "reviewed_at",
+        )
+        read_only_fields = fields
+
+    def get_submitter(self, obj):
+        return {"membership_id": obj.submitted_by_id, "username": obj.submitted_by.user.username}
+
+    def get_reviewer_detail(self, obj):
+        if not obj.reviewer_id:
+            return None
+        return {"membership_id": obj.reviewer_id, "username": obj.reviewer.user.username}
+
+
+class CompletionSubmissionSerializer(serializers.Serializer):
+    chore = serializers.PrimaryKeyRelatedField(queryset=Chore.objects.all(), required=False)
+    occurrence = serializers.UUIDField()
+
+    def validate(self, attrs):
+        membership = self.context["membership"]
+        if attrs.get("chore") and attrs["chore"].household_id != membership.household_id:
+            raise serializers.ValidationError({"chore": "Chore was not found."})
+        return attrs
+
+
+class CompletionReviewSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=(Completion.Status.APPROVED, Completion.Status.REJECTED))

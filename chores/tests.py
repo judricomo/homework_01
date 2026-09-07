@@ -19,7 +19,7 @@ from rest_framework.response import Response
 from rest_framework.test import APIClient
 from rest_framework.views import APIView
 
-from .models import Chore, ChoreAssignment, Household, Membership, RotationMember
+from .models import Chore, ChoreAssignment, Completion, Household, Membership, RotationMember
 from .services import calculate_next_due_date
 
 
@@ -903,6 +903,76 @@ class ChoreAPITests(TestCase):
         self.client.force_authenticate(self.member_user)
         response = self.client.post(reverse("my-chore-claim", args=[inactive.id]))
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class CompletionAPITests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        user_model = get_user_model()
+        self.household = Household.objects.create(name="Completions")
+        self.submitter = user_model.objects.create_user(username="submitter")
+        self.reviewer = user_model.objects.create_user(username="reviewer")
+        self.submitter_membership = Membership.objects.create(
+            household=self.household, user=self.submitter, role=Membership.Role.MEMBER
+        )
+        self.reviewer_membership = Membership.objects.create(
+            household=self.household, user=self.reviewer, role=Membership.Role.MEMBER
+        )
+        self.chore = Chore.objects.create(
+            household=self.household, name="Clean", difficulty="easy",
+            assignment_mode=Chore.AssignmentMode.MANUAL,
+        )
+        self.assignment = ChoreAssignment.create_manual(self.chore, self.submitter_membership)
+
+    def test_submit_pending_and_duplicate_is_rejected(self):
+        self.client.force_authenticate(self.submitter)
+        url = reverse("my-chore-complete", args=[self.chore.pk])
+        response = self.client.post(url, {"occurrence": str(self.assignment.occurrence)}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["status"], Completion.Status.PENDING)
+        self.assertEqual(Completion.objects.count(), 1)
+        response = self.client.post(url, {"occurrence": str(self.assignment.occurrence)}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(Completion.objects.count(), 1)
+
+    def test_reviewer_can_approve_and_self_review_is_denied(self):
+        completion = Completion.submit(
+            membership=self.submitter_membership, chore=self.chore,
+            occurrence=self.assignment.occurrence,
+        )
+        self.client.force_authenticate(self.submitter)
+        response = self.client.post(
+            reverse("completion-review", args=[completion.pk]),
+            {"status": Completion.Status.APPROVED}, format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.client.force_authenticate(self.reviewer)
+        response = self.client.post(
+            reverse("completion-review", args=[completion.pk]),
+            {"status": Completion.Status.APPROVED}, format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        completion.refresh_from_db()
+        self.assertEqual(completion.status, Completion.Status.APPROVED)
+        self.assertFalse(self.assignment.__class__.objects.get(pk=self.assignment.pk).is_active)
+        response = self.client.post(
+            reverse("completion-review", args=[completion.pk]),
+            {"status": Completion.Status.REJECTED}, format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_cross_household_and_inactive_members_are_denied(self):
+        self.client.force_authenticate(self.submitter)
+        other = Household.objects.create(name="Other")
+        other_user = get_user_model().objects.create_user(username="outsider")
+        Membership.objects.create(household=other, user=other_user, role=Membership.Role.MEMBER)
+        self.submitter_membership.is_active = False
+        self.submitter_membership.save(update_fields=["is_active"])
+        response = self.client.post(
+            reverse("my-chore-complete", args=[self.chore.pk]),
+            {"occurrence": str(self.assignment.occurrence)}, format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
 
 

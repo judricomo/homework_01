@@ -8,7 +8,7 @@ from django.shortcuts import get_object_or_404
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils import timezone
 
-from .models import Chore, ChoreAssignment, Membership
+from .models import Chore, ChoreAssignment, Completion, Membership
 from .permissions import IsActiveHouseholdMember, IsHouseholdAdministrator
 from .serializers import (
     AddMembershipSerializer,
@@ -16,6 +16,7 @@ from .serializers import (
     MembershipSerializer,
     ChoreSerializer,
     ChoreWorkSerializer,
+    CompletionSerializer, CompletionSubmissionSerializer, CompletionReviewSerializer,
 )
 
 FILTER_VALUES = {
@@ -214,3 +215,53 @@ class ChoreQueueViewSet(ChoreFilterMixin, viewsets.ReadOnlyModelViewSet):
             ).data,
             status=status.HTTP_201_CREATED,
         )
+
+    @action(detail=True, methods=["post"])
+    def complete(self, request, pk=None):
+        membership = self.get_membership()
+        chore = get_object_or_404(
+            Chore.objects.filter(household_id=membership.household_id), pk=pk
+        )
+        serializer = CompletionSubmissionSerializer(
+            data=request.data, context={"membership": membership}
+        )
+        serializer.is_valid(raise_exception=True)
+        if serializer.validated_data.get("chore", chore).pk != chore.pk:
+            raise ValidationError({"chore": "Chore does not match the route."})
+        try:
+            completion = Completion.submit(
+                membership=membership, chore=chore,
+                occurrence=serializer.validated_data["occurrence"],
+            )
+        except DjangoValidationError as exc:
+            raise ValidationError({"detail": exc.messages}) from exc
+        return Response(CompletionSerializer(completion).data, status=status.HTTP_201_CREATED)
+
+
+class CompletionViewSet(viewsets.ReadOnlyModelViewSet):
+    permission_classes = (IsActiveHouseholdMember,)
+    serializer_class = CompletionSerializer
+
+    def get_membership(self):
+        return Membership.objects.get(user=self.request.user, is_active=True)
+
+    def get_queryset(self):
+        membership = self.get_membership()
+        return Completion.objects.filter(
+            household_id=membership.household_id
+        ).select_related("chore", "assignment", "submitted_by__user", "reviewer__user")
+
+    @action(detail=True, methods=["post"])
+    def review(self, request, pk=None):
+        membership = self.get_membership()
+        completion = get_object_or_404(self.get_queryset(), pk=pk)
+        serializer = CompletionReviewSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            completion = Completion.review(
+                completion_id=completion.pk, reviewer=membership,
+                status=serializer.validated_data["status"],
+            )
+        except DjangoValidationError as exc:
+            raise ValidationError({"detail": exc.messages}) from exc
+        return Response(CompletionSerializer(completion).data)
